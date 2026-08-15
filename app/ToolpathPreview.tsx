@@ -9,6 +9,7 @@ export type PreviewHandle = {
   zoomIn: () => void;
   zoomOut: () => void;
   fit: () => void;
+  scaleSelection?: (factor: number) => void;
 };
 
 type PreviewProps = {

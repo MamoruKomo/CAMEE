@@ -98,9 +98,28 @@ button { color: inherit; }
 .calculate-button.is-ready { background: #2fbd72; color: #082f1a; }
 
 .workspace { grid-column: 3; grid-row: 2; min-width: 0; min-height: 0; position: relative; background: var(--work); overflow: hidden; }
-.three-preview { position: absolute; inset: 0 0 30px; }
+.three-preview, .toolpath-editor { position: absolute; inset: 0 0 30px; }
 .three-preview canvas { display: block; width: 100%; height: 100%; cursor: grab; }
 .three-preview canvas:active { cursor: grabbing; }
+.toolpath-editor {
+  background-color: var(--work);
+  background-image: linear-gradient(#d7dede 1px, transparent 1px), linear-gradient(90deg, #d7dede 1px, transparent 1px);
+  background-size: 25px 25px;
+}
+.toolpath-editor-svg { display: block; width: 100%; height: 100%; outline: 0; touch-action: none; cursor: grab; }
+.toolpath-editor-svg:active { cursor: grabbing; }
+.editor-board { fill: #f8f9f6; stroke: #aeb8ba; stroke-width: 1; vector-effect: non-scaling-stroke; filter: drop-shadow(0 7px 10px rgba(38,54,59,.14)); }
+.editor-path-hit { fill: none; stroke: transparent; stroke-width: 14; cursor: move; pointer-events: stroke; }
+.editor-path { fill: none; stroke: #079caf; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.editor-path.is-selected { stroke: var(--orange-dark, #d9890a); stroke-width: 3; }
+.editor-selection > rect:first-child { fill: none; stroke: #172126; stroke-width: 1; stroke-dasharray: 5 4; }
+.editor-scale-handle { fill: white; stroke: var(--cyan-dark); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.editor-origin line { stroke: #778488; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.editor-origin circle { fill: var(--orange); stroke: white; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.edit-tools { position: absolute; top: 14px; left: 14px; z-index: 4; display: flex; gap: 3px; padding: 4px; border: 1px solid #c5cdcf; border-radius: 5px; background: rgba(255,255,255,.94); color: #5e6a6e; box-shadow: 0 2px 8px rgba(32,48,53,.08); }
+.edit-tools .icon-button { width: 32px; height: 32px; }
+.edit-tools .icon-button:hover { background: #edf1f1; color: var(--ink); }
+.edit-tools .icon-button.is-active { background: #263238; color: white; }
 .view-switch { position: absolute; top: 14px; left: 50%; z-index: 3; display: flex; padding: 3px; border: 1px solid #c5cdcf; border-radius: 5px; background: rgba(255,255,255,.94); transform: translateX(-50%); box-shadow: 0 2px 8px rgba(32,48,53,.08); }
 .view-switch button { display: flex; align-items: center; justify-content: center; gap: 5px; width: 62px; height: 28px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: #697479; font-size: 10px; font-weight: 700; cursor: pointer; }
 .view-switch button.is-active { background: #263238; color: white; }

@@ -6,23 +6,28 @@ import {
   CircleAlert,
   Download,
   Drill,
+  Expand,
   FileType2,
   FolderOpen,
   Grid3X3,
   Info,
   Layers3,
   Maximize2,
+  MousePointer2,
   Play,
+  RotateCcw,
   Rotate3d,
   Ruler,
   Scissors,
   Settings2,
+  Shrink,
   Trash2,
   Upload,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ToolpathEditor2D } from "./ToolpathEditor2D";
 import { ToolpathPreview, type PreviewHandle } from "./ToolpathPreview";
 import {
   buildPassDepths,
@@ -33,6 +38,7 @@ import {
   pathsForOrigin,
   type CamSettings,
   type ParsedDrawing,
+  type ToolPath,
 } from "@/lib/cam";
 
 type SectionName = "file" | "cut" | "bit" | "material" | "settings";
@@ -126,6 +132,9 @@ export default function Home() {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState("");
   const [gcode, setGcode] = useState<string | null>(null);
+  const [displayPaths, setDisplayPaths] = useState<ToolPath[]>([]);
+  const [selectedPathId, setSelectedPathId] = useState<string | null>(null);
+  const [editorRevision, setEditorRevision] = useState(0);
   const [settings, setSettings] = useState<CamSettings>({
     finalDepth: 3,
     stepDown: 1,
@@ -146,11 +155,21 @@ export default function Home() {
     settings: null,
   });
 
-  const displayPaths = useMemo(
+  const baseDisplayPaths = useMemo(
     () => pathsForOrigin(drawing?.paths ?? [], origin),
     [drawing, origin],
   );
+  const boardBounds = useMemo(() => getBounds(baseDisplayPaths), [baseDisplayPaths]);
   const displayBounds = useMemo(() => getBounds(displayPaths), [displayPaths]);
+
+  useEffect(() => {
+    setDisplayPaths(baseDisplayPaths.map((path) => ({
+      ...path,
+      points: path.points.map((point) => ({ ...point })),
+    })));
+    setSelectedPathId(null);
+    setEditorRevision((current) => current + 1);
+  }, [baseDisplayPaths]);
   const depths = useMemo(() => {
     try {
       return buildPassDepths(settings.finalDepth, settings.stepDown);
@@ -201,6 +220,16 @@ export default function Home() {
     setGcode(null);
     setError("");
     if (inputRef.current) inputRef.current.value = "";
+  };
+
+  const resetPathEdits = () => {
+    setDisplayPaths(baseDisplayPaths.map((path) => ({
+      ...path,
+      points: path.points.map((point) => ({ ...point })),
+    })));
+    setSelectedPathId(null);
+    setEditorRevision((current) => current + 1);
+    setGcode(null);
   };
 
   const goToSection = (section: SectionName) => {
@@ -378,14 +407,37 @@ export default function Home() {
           <button type="button" className={view === "3d" ? "is-active" : ""} onClick={() => setView("3d")}><Rotate3d size={17} /> 3D</button>
         </div>
 
-        <ToolpathPreview
-          ref={previewRef}
-          paths={displayPaths}
-          depths={depths}
-          bitDiameter={settings.bitDiameter}
-          materialThickness={materialThickness}
-          mode={view}
-        />
+        {view === "2d" && drawing && (
+          <div className="edit-tools" aria-label="2D編集ツール">
+            <IconButton label="パスを選択・移動" active><MousePointer2 size={18} /></IconButton>
+            <IconButton label="選択パスを10%縮小" disabled={!selectedPathId} onClick={() => previewRef.current?.scaleSelection?.(0.9)}><Shrink size={18} /></IconButton>
+            <IconButton label="選択パスを10%拡大" disabled={!selectedPathId} onClick={() => previewRef.current?.scaleSelection?.(1.1)}><Expand size={18} /></IconButton>
+            <IconButton label="移動と拡大縮小をリセット" onClick={resetPathEdits}><RotateCcw size={18} /></IconButton>
+          </div>
+        )}
+
+        {view === "2d" ? (
+          <ToolpathEditor2D
+            key={`${fileName}-${origin}-${editorRevision}`}
+            ref={previewRef}
+            paths={displayPaths}
+            boardBounds={boardBounds}
+            onSelectionChange={setSelectedPathId}
+            onPathsChange={(paths) => {
+              setDisplayPaths(paths);
+              setGcode(null);
+            }}
+          />
+        ) : (
+          <ToolpathPreview
+            ref={previewRef}
+            paths={displayPaths}
+            depths={depths}
+            bitDiameter={settings.bitDiameter}
+            materialThickness={materialThickness}
+            mode="3d"
+          />
+        )}
         {!drawing && <div className="empty-hint"><FolderOpen size={25} /><span>DXFを読み込んでください</span></div>}
 
         <div className="zoom-tools" aria-label="プレビュー操作">
@@ -398,6 +450,7 @@ export default function Home() {
           <span><i className="status-dot" /> GORDIX6</span>
           <span>原点: {origin === "lower-left" ? "左下" : "DXF"}</span>
           <span>単位: mm</span>
+          {selectedPathId && <span>パス選択中</span>}
           <span className="status-spacer" />
           <span>パス {displayPaths.length} × {depths.length}</span>
           <span>加工時間 {formatDuration(estimatedMinutes)}</span>
