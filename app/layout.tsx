@@ -18,9 +18,9 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
-  const title = "GORDIX CAM";
+  const title = "CAMEE";
   const description = "DXFからGORDIX用の彫り込みツールパスとG-codeを作成するCAMアプリ";
-  const image = { url: `${origin}/og.png`, width: 1731, height: 909, alt: "GORDIX CAM toolpath workspace" };
+  const image = { url: `${origin}/og-camee.png`, width: 1731, height: 909, alt: "CAMEE toolpath workspace" };
 
   return {
     metadataBase: new URL(origin),

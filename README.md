@@ -1,4 +1,4 @@
-# GORDIX CAM
+# CAMEE
 
 DXFの2D図形から、GORDIX6ポスト形式の彫り込みG-codeを作成するブラウザCAMです。
 

@@ -266,9 +266,9 @@ export default function Home() {
   return (
     <main className="cam-shell">
       <header className="topbar">
-        <div className="brand" aria-label="GORDIX CAM">
-          <span className="brand-mark">G</span>
-          <span>GORDIX CAM</span>
+        <div className="brand" aria-label="CAMEE">
+          <span className="brand-mark">C</span>
+          <span>CAMEE</span>
           <span className="version">BETA</span>
         </div>
         <div className="top-actions" aria-label="ファイル操作">
