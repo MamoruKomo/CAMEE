@@ -3,7 +3,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import type { ToolPath } from "@/lib/cam";
+import { buildRampToolpath, type RampPoint, type ToolPath } from "@/lib/cam";
 
 export type PreviewHandle = {
   zoomIn: () => void;
@@ -18,6 +18,8 @@ type PreviewProps = {
   bitDiameter: number;
   materialThickness: number;
   mode: "2d" | "3d";
+  rampEnabled?: boolean;
+  rampLength?: number;
 };
 
 type ViewState = {
@@ -36,7 +38,7 @@ function disposeObject(object: THREE.Object3D) {
 }
 
 export const ToolpathPreview = forwardRef<PreviewHandle, PreviewProps>(function ToolpathPreview(
-  { paths, depths, bitDiameter, materialThickness, mode },
+  { paths, depths, bitDiameter, materialThickness, mode, rampEnabled = false, rampLength = 0 },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -154,7 +156,15 @@ export const ToolpathPreview = forwardRef<PreviewHandle, PreviewProps>(function 
       displayDepths.forEach((depth, depthIndex) => {
         const isFinal = depthIndex === displayDepths.length - 1;
         paths.forEach((path) => {
-          const vertices = path.points.flatMap((value) => [value.x - centerX, value.y - centerY, mode === "3d" ? -depth : 0.18]);
+          const previousDepth = depthIndex === 0 ? 0 : displayDepths[depthIndex - 1];
+          const rampPoints = mode === "3d" && rampEnabled
+            ? buildRampToolpath(path, previousDepth, depth, rampLength)
+            : [];
+          const vertices = (rampPoints.length ? rampPoints : path.points).flatMap((value) => [
+            value.x - centerX,
+            value.y - centerY,
+            mode === "3d" ? -(rampPoints.length ? (value as RampPoint).depth : depth) : 0.18,
+          ]);
           const geometry = new THREE.BufferGeometry();
           geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
           const material = new THREE.LineBasicMaterial({
@@ -165,7 +175,7 @@ export const ToolpathPreview = forwardRef<PreviewHandle, PreviewProps>(function 
           });
           scene.add(new THREE.Line(geometry, material));
 
-          if (mode === "3d" && path.points.length) {
+          if (mode === "3d" && path.points.length && !rampPoints.length) {
             const start = path.points[0];
             const plungeGeometry = new THREE.BufferGeometry().setFromPoints([
               new THREE.Vector3(start.x - centerX, start.y - centerY, 0.3),
@@ -220,7 +230,7 @@ export const ToolpathPreview = forwardRef<PreviewHandle, PreviewProps>(function 
       renderer.domElement.remove();
       viewRef.current = null;
     };
-  }, [paths, depths, bitDiameter, materialThickness, mode]);
+  }, [paths, depths, bitDiameter, materialThickness, mode, rampEnabled, rampLength]);
 
   return <div ref={containerRef} className="three-preview" aria-label={`${mode.toUpperCase()}ツールパスプレビュー`} />;
 });

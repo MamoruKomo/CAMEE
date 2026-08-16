@@ -8,7 +8,15 @@ import {
   useRef,
   useState,
 } from "react";
-import { getBounds, type Bounds, type Point2D, type ToolPath } from "@/lib/cam";
+import {
+  applyCornerRelief,
+  getBounds,
+  getCornerIndices,
+  type Bounds,
+  type CornerReliefType,
+  type Point2D,
+  type ToolPath,
+} from "@/lib/cam";
 import type { PreviewHandle } from "./ToolpathPreview";
 
 type ViewBox = { x: number; y: number; width: number; height: number };
@@ -16,6 +24,8 @@ type ViewBox = { x: number; y: number; width: number; height: number };
 type EditorProps = {
   paths: ToolPath[];
   boardBounds: Bounds;
+  bitDiameter: number;
+  cornerMode: "select" | CornerReliefType;
   onPathsChange: (paths: ToolPath[]) => void;
   onSelectionChange: (pathId: string | null) => void;
 };
@@ -74,7 +84,7 @@ function selectedBounds(path?: ToolPath) {
 }
 
 export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function ToolpathEditor2D(
-  { paths, boardBounds, onPathsChange, onSelectionChange },
+  { paths, boardBounds, bitDiameter, cornerMode, onPathsChange, onSelectionChange },
   ref,
 ) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -181,14 +191,30 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
     event.preventDefault();
     event.stopPropagation();
     svgRef.current?.focus();
-    svgRef.current?.setPointerCapture(event.pointerId);
     selectPath(pathId);
+    if (cornerMode !== "select") return;
+    svgRef.current?.setPointerCapture(event.pointerId);
     dragRef.current = {
       kind: "move",
       pathId,
       start: screenToDrawing(event.clientX, event.clientY),
       original: clonePaths(localPathsRef.current),
     };
+  };
+
+  const addCornerRelief = (
+    event: React.PointerEvent<SVGCircleElement>,
+    pathId: string,
+    cornerIndex: number,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (cornerMode === "select") return;
+    const next = localPathsRef.current.map((path) => path.id === pathId
+      ? applyCornerRelief(path, cornerIndex, bitDiameter, cornerMode)
+      : path);
+    updateLocalPaths(next);
+    onPathsChange(clonePaths(next));
   };
 
   const startScale = (event: React.PointerEvent<SVGRectElement>, pathId: string) => {
@@ -306,6 +332,10 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
 
   const selectedPath = localPaths.find((path) => path.id === selectedPathId);
   const selection = useMemo(() => selectedBounds(selectedPath), [selectedPath]);
+  const cornerIndices = useMemo(
+    () => selectedPath && cornerMode !== "select" ? getCornerIndices(selectedPath) : [],
+    [selectedPath, cornerMode],
+  );
   const handleSize = Math.max(0.01, (viewBox.width / viewportWidth) * 10);
   const boardMargin = Math.max(5, Math.max(boardBounds.width, boardBounds.height) * 0.025);
   const handles = selection ? [
@@ -363,6 +393,24 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
           </g>
         ))}
 
+        {selectedPath && cornerMode !== "select" && cornerIndices.map((cornerIndex) => {
+          const corner = selectedPath.points[cornerIndex];
+          if (!corner) return null;
+          return (
+            <circle
+              key={`${selectedPath.id}-corner-${cornerIndex}`}
+              className={`editor-corner-target is-${cornerMode}`}
+              cx={corner.x}
+              cy={-corner.y}
+              r={handleSize * 0.72}
+              vectorEffect="non-scaling-stroke"
+              onPointerDown={(event) => addCornerRelief(event, selectedPath.id, cornerIndex)}
+            >
+              <title>{cornerMode === "dogbone" ? "ドッグボーン" : "H型フィレット"}</title>
+            </circle>
+          );
+        })}
+
         {selection && selectedPath && (
           <g className="editor-selection">
             <rect
@@ -373,7 +421,7 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
               vectorEffect="non-scaling-stroke"
               pointerEvents="none"
             />
-            {handles.map((handle, index) => (
+            {cornerMode === "select" && handles.map((handle, index) => (
               <rect
                 key={`${handle.x}-${handle.y}-${index}`}
                 className="editor-scale-handle"

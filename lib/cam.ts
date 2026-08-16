@@ -4,6 +4,8 @@ import { NURBSCurve } from "three/examples/jsm/curves/NURBSCurve.js";
 
 export type Point2D = { x: number; y: number };
 
+export type CornerReliefType = "dogbone" | "tbone";
+
 export type ToolPath = {
   id: string;
   points: Point2D[];
@@ -37,6 +39,16 @@ export type CamSettings = {
   plungeRate: number;
   retractHeight: number;
   rapidFeed: number;
+  rampEnabled: boolean;
+  rampLength: number;
+};
+
+export type RampPoint = Point2D & { depth: number };
+
+export type ClosePathsResult = {
+  paths: ToolPath[];
+  joinedCount: number;
+  closedCount: number;
 };
 
 type DxfPoint = { x: number; y: number; z?: number; bulge?: number };
@@ -65,6 +77,14 @@ const CURVE_TOLERANCE = 0.08;
 
 function samePoint(a: Point2D, b: Point2D, tolerance = JOIN_TOLERANCE) {
   return Math.hypot(a.x - b.x, a.y - b.y) <= tolerance;
+}
+
+function distance(a: Point2D, b: Point2D) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function midpoint(a: Point2D, b: Point2D): Point2D {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
 function point(x: number, y: number, scale: number): Point2D {
@@ -348,6 +368,201 @@ export function pathsForOrigin(paths: ToolPath[], origin: "lower-left" | "dxf") 
   }));
 }
 
+function pathWithoutClosingDuplicate(path: ToolPath) {
+  const points = path.points.map((value) => ({ ...value }));
+  if (path.closed && points.length > 1 && samePoint(points[0], points[points.length - 1], 1e-6)) {
+    points.pop();
+  }
+  return points;
+}
+
+export function getCornerIndices(path: ToolPath) {
+  const points = pathWithoutClosingDuplicate(path);
+  if (points.length < 3) return [];
+  const first = path.closed ? 0 : 1;
+  const last = path.closed ? points.length - 1 : points.length - 2;
+  const corners: number[] = [];
+
+  for (let index = first; index <= last; index += 1) {
+    const previousIndex = (index - 1 + points.length) % points.length;
+    const nextIndex = (index + 1) % points.length;
+    const previous = points[previousIndex];
+    const current = points[index];
+    const next = points[nextIndex];
+    const previousLength = distance(previous, current);
+    const nextLength = distance(current, next);
+    if (previousLength < 1e-6 || nextLength < 1e-6) continue;
+
+    // Relief points use a corner -> excursion -> same corner pattern. Hide all
+    // three generated nodes from the next editing pass.
+    const twoBefore = points[(index - 2 + points.length) % points.length];
+    const twoAfter = points[(index + 2) % points.length];
+    if (samePoint(previous, next, 1e-6)
+      || samePoint(current, twoBefore, 1e-6)
+      || samePoint(current, twoAfter, 1e-6)) continue;
+
+    const incoming = { x: previous.x - current.x, y: previous.y - current.y };
+    const outgoing = { x: next.x - current.x, y: next.y - current.y };
+    const dot = (incoming.x * outgoing.x + incoming.y * outgoing.y) / (previousLength * nextLength);
+    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+    if (angle < Math.PI * 0.97) corners.push(index);
+  }
+  return corners;
+}
+
+export function applyCornerRelief(
+  path: ToolPath,
+  cornerIndex: number,
+  bitDiameter: number,
+  type: CornerReliefType,
+) {
+  const points = pathWithoutClosingDuplicate(path);
+  if (points.length < 3 || bitDiameter <= 0) return path;
+  const corner = points[cornerIndex];
+  if (!corner || (!path.closed && (cornerIndex <= 0 || cornerIndex >= points.length - 1))) return path;
+  const previousIndex = (cornerIndex - 1 + points.length) % points.length;
+  const nextIndex = (cornerIndex + 1) % points.length;
+  const previous = points[previousIndex];
+  const next = points[nextIndex];
+
+  const previousLength = distance(previous, corner);
+  const nextLength = distance(corner, next);
+  if (previousLength < 1e-6 || nextLength < 1e-6) return path;
+  const toPrevious = { x: (previous.x - corner.x) / previousLength, y: (previous.y - corner.y) / previousLength };
+  const toNext = { x: (next.x - corner.x) / nextLength, y: (next.y - corner.y) / nextLength };
+  const angle = Math.acos(Math.max(-1, Math.min(1, toPrevious.x * toNext.x + toPrevious.y * toNext.y)));
+  if (angle >= Math.PI * 0.97 || angle <= Math.PI * 0.03) return path;
+
+  const radius = bitDiameter / 2;
+  let direction: Point2D;
+  let reliefDistance: number;
+  if (type === "dogbone") {
+    const bisector = { x: toPrevious.x + toNext.x, y: toPrevious.y + toNext.y };
+    const bisectorLength = Math.hypot(bisector.x, bisector.y);
+    if (bisectorLength < 1e-6) return path;
+    direction = { x: -bisector.x / bisectorLength, y: -bisector.y / bisectorLength };
+    reliefDistance = Math.min(radius * 4, radius / Math.max(0.25, Math.sin(angle / 2)));
+  } else if (previousLength >= nextLength) {
+    direction = { x: -toPrevious.x, y: -toPrevious.y };
+    reliefDistance = radius;
+  } else {
+    direction = { x: -toNext.x, y: -toNext.y };
+    reliefDistance = radius;
+  }
+
+  const relief = {
+    x: corner.x + direction.x * reliefDistance,
+    y: corner.y + direction.y * reliefDistance,
+  };
+  points.splice(cornerIndex, 1, { ...corner }, relief, { ...corner });
+  if (path.closed) points.push({ ...points[0] });
+  return { ...path, points };
+}
+
+function orientedJoin(a: ToolPath, b: ToolPath, tolerance: number) {
+  const options = [
+    { distance: distance(a.points[a.points.length - 1], b.points[0]), reverseA: false, reverseB: false },
+    { distance: distance(a.points[a.points.length - 1], b.points[b.points.length - 1]), reverseA: false, reverseB: true },
+    { distance: distance(a.points[0], b.points[0]), reverseA: true, reverseB: false },
+    { distance: distance(a.points[0], b.points[b.points.length - 1]), reverseA: true, reverseB: true },
+  ].sort((left, right) => left.distance - right.distance);
+  const best = options[0];
+  if (best.distance > tolerance) return null;
+  const aPoints = (best.reverseA ? [...a.points].reverse() : [...a.points]).map((value) => ({ ...value }));
+  const bPoints = (best.reverseB ? [...b.points].reverse() : [...b.points]).map((value) => ({ ...value }));
+  const join = midpoint(aPoints[aPoints.length - 1], bPoints[0]);
+  aPoints[aPoints.length - 1] = join;
+  bPoints[0] = join;
+  return {
+    id: a.id,
+    points: [...aPoints, ...bPoints.slice(1)],
+    closed: false,
+    sourceType: a.sourceType === b.sourceType ? a.sourceType : "JOINED",
+  } satisfies ToolPath;
+}
+
+export function closeOpenPaths(input: ToolPath[], tolerance: number): ClosePathsResult {
+  if (!Number.isFinite(tolerance) || tolerance < 0) {
+    throw new Error("接続許容値は0以上にしてください。");
+  }
+  const paths = input.map((path) => ({ ...path, points: path.points.map((value) => ({ ...value })) }));
+  let joinedCount = 0;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let left = 0; left < paths.length; left += 1) {
+      if (paths[left].closed) continue;
+      for (let right = left + 1; right < paths.length; right += 1) {
+        if (paths[right].closed) continue;
+        const joined = orientedJoin(paths[left], paths[right], tolerance);
+        if (!joined) continue;
+        paths.splice(right, 1);
+        paths[left] = joined;
+        joinedCount += 1;
+        changed = true;
+        break;
+      }
+      if (changed) break;
+    }
+  }
+
+  let closedCount = 0;
+  paths.forEach((path) => {
+    if (path.closed || path.points.length < 3) return;
+    const start = path.points[0];
+    const end = path.points[path.points.length - 1];
+    if (!samePoint(start, end, tolerance)) return;
+    const join = midpoint(start, end);
+    path.points[0] = join;
+    path.points[path.points.length - 1] = { ...join };
+    path.closed = true;
+    closedCount += 1;
+  });
+  return { paths, joinedCount, closedCount };
+}
+
+function splitPolylineAtDistance(points: Point2D[], requestedDistance: number) {
+  const totalLength = points.slice(1).reduce((total, value, index) => total + distance(points[index], value), 0);
+  const target = Math.max(0, Math.min(requestedDistance, totalLength));
+  const before: Point2D[] = [{ ...points[0] }];
+  let travelled = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
+    const segmentLength = distance(start, end);
+    if (travelled + segmentLength < target - 1e-9) {
+      before.push({ ...end });
+      travelled += segmentLength;
+      continue;
+    }
+    const ratio = segmentLength > 0 ? (target - travelled) / segmentLength : 0;
+    const cut = {
+      x: start.x + (end.x - start.x) * Math.max(0, Math.min(1, ratio)),
+      y: start.y + (end.y - start.y) * Math.max(0, Math.min(1, ratio)),
+    };
+    before.push(cut);
+    return { before, after: [cut, ...points.slice(index).map((value) => ({ ...value }))], distance: target };
+  }
+  return { before, after: [{ ...points[points.length - 1] }], distance: totalLength };
+}
+
+export function buildRampToolpath(path: ToolPath, startDepth: number, targetDepth: number, rampLength: number) {
+  if (!path.closed || path.points.length < 3 || rampLength <= 0) return [] as RampPoint[];
+  const split = splitPolylineAtDistance(path.points, rampLength);
+  if (split.distance <= 1e-6) return [] as RampPoint[];
+  let travelled = 0;
+  const ramp = split.before.map((value, index) => {
+    if (index > 0) travelled += distance(split.before[index - 1], value);
+    return {
+      ...value,
+      depth: startDepth + (targetDepth - startDepth) * Math.min(1, travelled / split.distance),
+    };
+  });
+  const fullDepthRemainder = split.after.slice(1).map((value) => ({ ...value, depth: targetDepth }));
+  const finishRampSection = split.before.slice(1).map((value) => ({ ...value, depth: targetDepth }));
+  return [...ramp, ...fullDepthRemainder, ...finishRampSection];
+}
+
 export function buildPassDepths(finalDepth: number, stepDown: number) {
   if (!Number.isFinite(finalDepth) || !Number.isFinite(stepDown) || finalDepth <= 0 || stepDown <= 0) return [];
   const count = Math.ceil(finalDepth / stepDown);
@@ -369,6 +584,9 @@ export function generateGcode(paths: ToolPath[], settings: CamSettings, fileName
   if (settings.bitDiameter <= 0 || settings.feedRate <= 0 || settings.plungeRate <= 0) {
     throw new Error("ビット径と送り速度は0より大きい値にしてください。");
   }
+  if (settings.rampEnabled && settings.rampLength <= 0) {
+    throw new Error("ランプ長さは0より大きい値にしてください。");
+  }
 
   const lines = [
     "; CNC V4.0",
@@ -387,11 +605,24 @@ export function generateGcode(paths: ToolPath[], settings: CamSettings, fileName
       const start = path.points[0];
       if (cuttingStarted) lines.push(`G0 Z${format(settings.retractHeight)}`);
       lines.push(`G0 X${format(start.x)} Y${format(start.y)}`);
-      lines.push(`G1 Z-${format(depth)} F${format(settings.plungeRate)}`);
-      path.points.slice(1).forEach((value, pointIndex) => {
-        const feed = pointIndex === 0 ? ` F${format(settings.feedRate)}` : "";
-        lines.push(`G1 X${format(value.x)} Y${format(value.y)}${feed}`);
-      });
+      const previousDepth = passIndex === 0 ? 0 : depths[passIndex - 1];
+      const ramp = settings.rampEnabled
+        ? buildRampToolpath(path, previousDepth, depth, settings.rampLength)
+        : [];
+      if (ramp.length) {
+        lines.push(`; Ramp L${format(Math.min(settings.rampLength, pathLength(path)))}`);
+        lines.push(`G1 Z${format(-previousDepth)} F${format(settings.plungeRate)}`);
+        ramp.slice(1).forEach((value, pointIndex) => {
+          const feed = pointIndex === 0 ? ` F${format(settings.feedRate)}` : "";
+          lines.push(`G1 X${format(value.x)} Y${format(value.y)} Z${format(-value.depth)}${feed}`);
+        });
+      } else {
+        lines.push(`G1 Z-${format(depth)} F${format(settings.plungeRate)}`);
+        path.points.slice(1).forEach((value, pointIndex) => {
+          const feed = pointIndex === 0 ? ` F${format(settings.feedRate)}` : "";
+          lines.push(`G1 X${format(value.x)} Y${format(value.y)}${feed}`);
+        });
+      }
       cuttingStarted = true;
     });
   });
@@ -401,13 +632,22 @@ export function generateGcode(paths: ToolPath[], settings: CamSettings, fileName
   return lines.join("\n");
 }
 
+function pathLength(path: ToolPath) {
+  return path.points.slice(1).reduce((total, value, index) => total + distance(path.points[index], value), 0);
+}
+
 export function estimateMinutes(paths: ToolPath[], settings: CamSettings) {
   const depths = buildPassDepths(settings.finalDepth, settings.stepDown);
   if (!depths.length || settings.feedRate <= 0 || settings.plungeRate <= 0) return 0;
-  const pathDistance = paths.reduce((total, path) => total + path.points.slice(1).reduce((pathTotal, value, index) => {
-    const previous = path.points[index];
-    return pathTotal + Math.hypot(value.x - previous.x, value.y - previous.y);
-  }, 0), 0);
-  const plungeDistance = depths.reduce((total, depth) => total + depth * paths.length, 0);
-  return (pathDistance * depths.length) / settings.feedRate + plungeDistance / settings.plungeRate;
+  const pathDistance = paths.reduce((total, path) => total + pathLength(path), 0);
+  const rampExtra = settings.rampEnabled
+    ? depths.length * paths.reduce((total, path) => total + (path.closed ? Math.min(settings.rampLength, pathLength(path)) : 0), 0)
+    : 0;
+  const plungeDistance = depths.reduce((total, depth, index) => {
+    const previousDepth = index === 0 ? 0 : depths[index - 1];
+    return total + paths.reduce((pathTotal, path) => pathTotal + (
+      settings.rampEnabled && path.closed ? previousDepth : depth
+    ), 0);
+  }, 0);
+  return (pathDistance * depths.length + rampExtra) / settings.feedRate + plungeDistance / settings.plungeRate;
 }

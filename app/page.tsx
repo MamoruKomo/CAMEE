@@ -3,6 +3,7 @@
 import {
   Box,
   Check,
+  CircleDot,
   CircleAlert,
   Download,
   Drill,
@@ -12,6 +13,7 @@ import {
   Grid3X3,
   Info,
   Layers3,
+  Link2,
   Maximize2,
   MousePointer2,
   Play,
@@ -22,6 +24,8 @@ import {
   Settings2,
   Shrink,
   Trash2,
+  TrendingDown,
+  UnfoldHorizontal,
   Upload,
   ZoomIn,
   ZoomOut,
@@ -31,17 +35,21 @@ import { ToolpathEditor2D } from "./ToolpathEditor2D";
 import { ToolpathPreview, type PreviewHandle } from "./ToolpathPreview";
 import {
   buildPassDepths,
+  closeOpenPaths,
   estimateMinutes,
   generateGcode,
   getBounds,
   parseDxfText,
   pathsForOrigin,
   type CamSettings,
+  type CornerReliefType,
   type ParsedDrawing,
   type ToolPath,
 } from "@/lib/cam";
 
 type SectionName = "file" | "cut" | "bit" | "material" | "settings";
+type CornerEditMode = "select" | CornerReliefType;
+type NumericCamSetting = Exclude<keyof CamSettings, "rampEnabled">;
 
 const toolButtons = [
   { id: "file" as const, label: "DXFファイル", icon: FolderOpen },
@@ -134,6 +142,9 @@ export default function Home() {
   const [gcode, setGcode] = useState<string | null>(null);
   const [displayPaths, setDisplayPaths] = useState<ToolPath[]>([]);
   const [selectedPathId, setSelectedPathId] = useState<string | null>(null);
+  const [cornerMode, setCornerMode] = useState<CornerEditMode>("select");
+  const [closeTolerance, setCloseTolerance] = useState(0.1);
+  const [pathNotice, setPathNotice] = useState("");
   const [editorRevision, setEditorRevision] = useState(0);
   const [settings, setSettings] = useState<CamSettings>({
     finalDepth: 3,
@@ -143,6 +154,8 @@ export default function Home() {
     plungeRate: 300,
     retractHeight: 2,
     rapidFeed: 2000,
+    rampEnabled: false,
+    rampLength: 12,
   });
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -163,11 +176,15 @@ export default function Home() {
   const displayBounds = useMemo(() => getBounds(displayPaths), [displayPaths]);
 
   useEffect(() => {
+    // A file or origin change starts a fresh editing document.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDisplayPaths(baseDisplayPaths.map((path) => ({
       ...path,
       points: path.points.map((point) => ({ ...point })),
     })));
     setSelectedPathId(null);
+    setCornerMode("select");
+    setPathNotice("");
     setEditorRevision((current) => current + 1);
   }, [baseDisplayPaths]);
   const depths = useMemo(() => {
@@ -185,7 +202,7 @@ export default function Home() {
     }
   }, [displayPaths, settings]);
 
-  const updateSetting = (key: keyof CamSettings, value: number) => {
+  const updateSetting = (key: NumericCamSetting, value: number) => {
     setSettings((current) => ({ ...current, [key]: value }));
     setGcode(null);
   };
@@ -228,8 +245,29 @@ export default function Home() {
       points: path.points.map((point) => ({ ...point })),
     })));
     setSelectedPathId(null);
+    setCornerMode("select");
+    setPathNotice("");
     setEditorRevision((current) => current + 1);
     setGcode(null);
+  };
+
+  const connectAndClosePaths = () => {
+    setError("");
+    try {
+      const result = closeOpenPaths(displayPaths, closeTolerance);
+      if (!result.joinedCount && !result.closedCount) {
+        setPathNotice("許容値内に接続できる端点はありません");
+        return;
+      }
+      setDisplayPaths(result.paths);
+      setSelectedPathId(null);
+      setCornerMode("select");
+      setEditorRevision((current) => current + 1);
+      setGcode(null);
+      setPathNotice(`接続 ${result.joinedCount}・閉合 ${result.closedCount}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "パスを閉じられませんでした。");
+    }
   };
 
   const goToSection = (section: SectionName) => {
@@ -356,6 +394,31 @@ export default function Home() {
           <div className="pass-summary">
             <Layers3 size={17} /><span>加工回数</span><strong>{depths.length || "-"} パス</strong>
           </div>
+          <label className="toggle-row">
+            <span className="toggle-label"><TrendingDown size={16} />ランプ進入</span>
+            <input
+              type="checkbox"
+              checked={settings.rampEnabled}
+              onChange={(event) => {
+                setSettings((current) => ({ ...current, rampEnabled: event.target.checked }));
+                setGcode(null);
+              }}
+            />
+            <span className="toggle-control" aria-hidden="true" />
+          </label>
+          {settings.rampEnabled && (
+            <div className="single-field">
+              <NumberField label="ランプ長さ" value={settings.rampLength} unit="mm" onChange={(value) => updateSetting("rampLength", value)} />
+            </div>
+          )}
+          <div className="path-close-row">
+            <NumberField label="接続許容値" value={closeTolerance} unit="mm" min={0} step={0.01} onChange={setCloseTolerance} />
+            <button type="button" className="path-action-button" disabled={!displayPaths.length} onClick={connectAndClosePaths}>
+              <Link2 size={17} />
+              <span>接続・閉じる</span>
+            </button>
+          </div>
+          {pathNotice && <p className="field-note path-notice"><Check size={13} /> {pathNotice}</p>}
         </section>
 
         <section className="panel-section" ref={(node) => { sectionRefs.current.bit = node; }}>
@@ -409,7 +472,9 @@ export default function Home() {
 
         {view === "2d" && drawing && (
           <div className="edit-tools" aria-label="2D編集ツール">
-            <IconButton label="パスを選択・移動" active><MousePointer2 size={18} /></IconButton>
+            <IconButton label="パスを選択・移動" active={cornerMode === "select"} onClick={() => setCornerMode("select")}><MousePointer2 size={18} /></IconButton>
+            <IconButton label="ドッグボーンをコーナーへ追加" active={cornerMode === "dogbone"} disabled={!selectedPathId} onClick={() => setCornerMode("dogbone")}><CircleDot size={18} /></IconButton>
+            <IconButton label="H型フィレットをコーナーへ追加" active={cornerMode === "tbone"} disabled={!selectedPathId} onClick={() => setCornerMode("tbone")}><UnfoldHorizontal size={18} /></IconButton>
             <IconButton label="選択パスを10%縮小" disabled={!selectedPathId} onClick={() => previewRef.current?.scaleSelection?.(0.9)}><Shrink size={18} /></IconButton>
             <IconButton label="選択パスを10%拡大" disabled={!selectedPathId} onClick={() => previewRef.current?.scaleSelection?.(1.1)}><Expand size={18} /></IconButton>
             <IconButton label="移動と拡大縮小をリセット" onClick={resetPathEdits}><RotateCcw size={18} /></IconButton>
@@ -422,9 +487,12 @@ export default function Home() {
             ref={previewRef}
             paths={displayPaths}
             boardBounds={boardBounds}
+            bitDiameter={settings.bitDiameter}
+            cornerMode={cornerMode}
             onSelectionChange={setSelectedPathId}
             onPathsChange={(paths) => {
               setDisplayPaths(paths);
+              setPathNotice("");
               setGcode(null);
             }}
           />
@@ -436,6 +504,8 @@ export default function Home() {
             bitDiameter={settings.bitDiameter}
             materialThickness={materialThickness}
             mode="3d"
+            rampEnabled={settings.rampEnabled}
+            rampLength={settings.rampLength}
           />
         )}
         {!drawing && <div className="empty-hint"><FolderOpen size={25} /><span>DXFを読み込んでください</span></div>}
@@ -450,7 +520,7 @@ export default function Home() {
           <span><i className="status-dot" /> GORDIX6</span>
           <span>原点: {origin === "lower-left" ? "左下" : "DXF"}</span>
           <span>単位: mm</span>
-          {selectedPathId && <span>パス選択中</span>}
+          {selectedPathId && <span>{cornerMode === "select" ? "パス選択中" : cornerMode === "dogbone" ? "ドッグボーン" : "H型フィレット"}</span>}
           <span className="status-spacer" />
           <span>パス {displayPaths.length} × {depths.length}</span>
           <span>加工時間 {formatDuration(estimatedMinutes)}</span>
