@@ -18,6 +18,7 @@ import {
   MousePointer2,
   Play,
   RotateCcw,
+  RotateCw,
   Rotate3d,
   Ruler,
   Scissors,
@@ -26,11 +27,12 @@ import {
   Trash2,
   TrendingDown,
   UnfoldHorizontal,
+  Undo2,
   Upload,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ToolpathEditor2D } from "./ToolpathEditor2D";
 import { ToolpathPreview, type PreviewHandle } from "./ToolpathPreview";
 import {
@@ -141,10 +143,11 @@ export default function Home() {
   const [error, setError] = useState("");
   const [gcode, setGcode] = useState<string | null>(null);
   const [displayPaths, setDisplayPaths] = useState<ToolPath[]>([]);
-  const [selectedPathId, setSelectedPathId] = useState<string | null>(null);
+  const [selectedPathIds, setSelectedPathIds] = useState<string[]>([]);
   const [cornerMode, setCornerMode] = useState<CornerEditMode>("select");
   const [closeTolerance, setCloseTolerance] = useState(0.1);
   const [pathNotice, setPathNotice] = useState("");
+  const [showClosePanel, setShowClosePanel] = useState(false);
   const [editorRevision, setEditorRevision] = useState(0);
   const [settings, setSettings] = useState<CamSettings>({
     finalDepth: 3,
@@ -182,9 +185,10 @@ export default function Home() {
       ...path,
       points: path.points.map((point) => ({ ...point })),
     })));
-    setSelectedPathId(null);
+    setSelectedPathIds([]);
     setCornerMode("select");
     setPathNotice("");
+    setShowClosePanel(false);
     setEditorRevision((current) => current + 1);
   }, [baseDisplayPaths]);
   const depths = useMemo(() => {
@@ -244,9 +248,10 @@ export default function Home() {
       ...path,
       points: path.points.map((point) => ({ ...point })),
     })));
-    setSelectedPathId(null);
+    setSelectedPathIds([]);
     setCornerMode("select");
     setPathNotice("");
+    setShowClosePanel(false);
     setEditorRevision((current) => current + 1);
     setGcode(null);
   };
@@ -260,7 +265,7 @@ export default function Home() {
         return;
       }
       setDisplayPaths(result.paths);
-      setSelectedPathId(null);
+      setSelectedPathIds([]);
       setCornerMode("select");
       setEditorRevision((current) => current + 1);
       setGcode(null);
@@ -269,6 +274,11 @@ export default function Home() {
       setError(caught instanceof Error ? caught.message : "パスを閉じられませんでした。");
     }
   };
+
+  const handleSelectionChange = useCallback((pathIds: string[]) => {
+    setSelectedPathIds(pathIds);
+    if (pathIds.length !== 1) setCornerMode("select");
+  }, []);
 
   const goToSection = (section: SectionName) => {
     setActiveSection(section);
@@ -411,14 +421,6 @@ export default function Home() {
               <NumberField label="ランプ長さ" value={settings.rampLength} unit="mm" onChange={(value) => updateSetting("rampLength", value)} />
             </div>
           )}
-          <div className="path-close-row">
-            <NumberField label="接続許容値" value={closeTolerance} unit="mm" min={0} step={0.01} onChange={setCloseTolerance} />
-            <button type="button" className="path-action-button" disabled={!displayPaths.length} onClick={connectAndClosePaths}>
-              <Link2 size={17} />
-              <span>接続・閉じる</span>
-            </button>
-          </div>
-          {pathNotice && <p className="field-note path-notice"><Check size={13} /> {pathNotice}</p>}
         </section>
 
         <section className="panel-section" ref={(node) => { sectionRefs.current.bit = node; }}>
@@ -467,17 +469,32 @@ export default function Home() {
       <section className="workspace" aria-label="プレビュー">
         <div className="view-switch" aria-label="表示切り替え">
           <button type="button" className={view === "2d" ? "is-active" : ""} onClick={() => setView("2d")}><Grid3X3 size={16} /> 2D</button>
-          <button type="button" className={view === "3d" ? "is-active" : ""} onClick={() => setView("3d")}><Rotate3d size={17} /> 3D</button>
+          <button type="button" className={view === "3d" ? "is-active" : ""} onClick={() => { setView("3d"); setShowClosePanel(false); }}><Rotate3d size={17} /> 3D</button>
         </div>
 
         {view === "2d" && drawing && (
           <div className="edit-tools" aria-label="2D編集ツール">
-            <IconButton label="パスを選択・移動" active={cornerMode === "select"} onClick={() => setCornerMode("select")}><MousePointer2 size={18} /></IconButton>
-            <IconButton label="ドッグボーンをコーナーへ追加" active={cornerMode === "dogbone"} disabled={!selectedPathId} onClick={() => setCornerMode("dogbone")}><CircleDot size={18} /></IconButton>
-            <IconButton label="H型フィレットをコーナーへ追加" active={cornerMode === "tbone"} disabled={!selectedPathId} onClick={() => setCornerMode("tbone")}><UnfoldHorizontal size={18} /></IconButton>
-            <IconButton label="選択パスを10%縮小" disabled={!selectedPathId} onClick={() => previewRef.current?.scaleSelection?.(0.9)}><Shrink size={18} /></IconButton>
-            <IconButton label="選択パスを10%拡大" disabled={!selectedPathId} onClick={() => previewRef.current?.scaleSelection?.(1.1)}><Expand size={18} /></IconButton>
-            <IconButton label="移動と拡大縮小をリセット" onClick={resetPathEdits}><RotateCcw size={18} /></IconButton>
+            <IconButton label="パス・ウィンドウ選択" active={cornerMode === "select"} onClick={() => setCornerMode("select")}><MousePointer2 size={18} /></IconButton>
+            <IconButton label="ドッグボーンをコーナーへ追加" active={cornerMode === "dogbone"} disabled={selectedPathIds.length !== 1} onClick={() => setCornerMode("dogbone")}><CircleDot size={18} /></IconButton>
+            <IconButton label="H型フィレットをコーナーへ追加" active={cornerMode === "tbone"} disabled={selectedPathIds.length !== 1} onClick={() => setCornerMode("tbone")}><UnfoldHorizontal size={18} /></IconButton>
+            <IconButton label="選択パスを10%縮小" disabled={!selectedPathIds.length} onClick={() => previewRef.current?.scaleSelection?.(0.9)}><Shrink size={18} /></IconButton>
+            <IconButton label="選択パスを10%拡大" disabled={!selectedPathIds.length} onClick={() => previewRef.current?.scaleSelection?.(1.1)}><Expand size={18} /></IconButton>
+            <IconButton label="選択パスを左へ15度回転" disabled={!selectedPathIds.length} onClick={() => previewRef.current?.rotateSelection?.(-15)}><RotateCcw size={18} /></IconButton>
+            <IconButton label="選択パスを右へ15度回転" disabled={!selectedPathIds.length} onClick={() => previewRef.current?.rotateSelection?.(15)}><RotateCw size={18} /></IconButton>
+            <IconButton label="パスの接続・閉合設定" active={showClosePanel} onClick={() => setShowClosePanel((current) => !current)}><Link2 size={18} /></IconButton>
+            <IconButton label="2D編集をリセット" onClick={resetPathEdits}><Undo2 size={18} /></IconButton>
+          </div>
+        )}
+
+        {view === "2d" && drawing && showClosePanel && (
+          <div className="close-path-popover" role="dialog" aria-label="パスの接続・閉合設定">
+            <div className="close-panel-heading"><Link2 size={16} /><strong>パスの接続・閉合</strong></div>
+            <NumberField label="接続許容値" value={closeTolerance} unit="mm" min={0} step={0.01} onChange={setCloseTolerance} />
+            <button type="button" className="path-action-button" disabled={!displayPaths.length} onClick={connectAndClosePaths}>
+              <Link2 size={17} />
+              <span>接続・閉じる</span>
+            </button>
+            {pathNotice && <p className="field-note path-notice"><Check size={13} /> {pathNotice}</p>}
           </div>
         )}
 
@@ -489,7 +506,7 @@ export default function Home() {
             boardBounds={boardBounds}
             bitDiameter={settings.bitDiameter}
             cornerMode={cornerMode}
-            onSelectionChange={setSelectedPathId}
+            onSelectionChange={handleSelectionChange}
             onPathsChange={(paths) => {
               setDisplayPaths(paths);
               setPathNotice("");
@@ -520,7 +537,7 @@ export default function Home() {
           <span><i className="status-dot" /> GORDIX6</span>
           <span>原点: {origin === "lower-left" ? "左下" : "DXF"}</span>
           <span>単位: mm</span>
-          {selectedPathId && <span>{cornerMode === "select" ? "パス選択中" : cornerMode === "dogbone" ? "ドッグボーン" : "H型フィレット"}</span>}
+          {!!selectedPathIds.length && <span>{cornerMode === "select" ? `${selectedPathIds.length} パス選択` : cornerMode === "dogbone" ? "ドッグボーン" : "H型フィレット"}</span>}
           <span className="status-spacer" />
           <span>パス {displayPaths.length} × {depths.length}</span>
           <span>加工時間 {formatDuration(estimatedMinutes)}</span>

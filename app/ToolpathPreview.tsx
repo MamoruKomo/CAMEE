@@ -10,6 +10,7 @@ export type PreviewHandle = {
   zoomOut: () => void;
   fit: () => void;
   scaleSelection?: (factor: number) => void;
+  rotateSelection?: (degrees: number) => void;
 };
 
 type PreviewProps = {

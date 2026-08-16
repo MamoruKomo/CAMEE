@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -27,19 +28,19 @@ type EditorProps = {
   bitDiameter: number;
   cornerMode: "select" | CornerReliefType;
   onPathsChange: (paths: ToolPath[]) => void;
-  onSelectionChange: (pathId: string | null) => void;
+  onSelectionChange: (pathIds: string[]) => void;
 };
 
 type MoveDrag = {
   kind: "move";
-  pathId: string;
+  pathIds: string[];
   start: Point2D;
   original: ToolPath[];
 };
 
 type ScaleDrag = {
   kind: "scale";
-  pathId: string;
+  pathIds: string[];
   center: Point2D;
   startDistance: number;
   original: ToolPath[];
@@ -51,7 +52,15 @@ type PanDrag = {
   startViewBox: ViewBox;
 };
 
-type DragState = MoveDrag | ScaleDrag | PanDrag;
+type WindowDrag = {
+  kind: "window";
+  start: Point2D;
+  current: Point2D;
+  additive: boolean;
+  originalSelection: string[];
+};
+
+type DragState = MoveDrag | ScaleDrag | PanDrag | WindowDrag;
 
 function clonePaths(paths: ToolPath[]) {
   return paths.map((path) => ({
@@ -78,9 +87,20 @@ function pathData(path: ToolPath) {
     .join(" ");
 }
 
-function selectedBounds(path?: ToolPath) {
-  if (!path) return null;
-  return getBounds([path]);
+function boundsForSelection(paths: ToolPath[], pathIds: string[]) {
+  const selected = paths.filter((path) => pathIds.includes(path.id));
+  return selected.length ? getBounds(selected) : null;
+}
+
+function transformSelected(
+  paths: ToolPath[],
+  pathIds: string[],
+  transform: (point: Point2D) => Point2D,
+) {
+  const selected = new Set(pathIds);
+  return paths.map((path) => selected.has(path.id)
+    ? { ...path, points: path.points.map(transform) }
+    : path);
 }
 
 export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function ToolpathEditor2D(
@@ -91,7 +111,9 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
   const dragRef = useRef<DragState | null>(null);
   const [localPaths, setLocalPaths] = useState(() => clonePaths(paths));
   const localPathsRef = useRef(localPaths);
-  const [selectedPathId, setSelectedPathId] = useState<string | null>(null);
+  const [selectedPathIds, setSelectedPathIds] = useState<string[]>([]);
+  const selectedPathIdsRef = useRef(selectedPathIds);
+  const [selectionWindow, setSelectionWindow] = useState<WindowDrag | null>(null);
   const [viewBox, setViewBox] = useState(() => viewBoxForBounds(getBounds(paths)));
   const [viewportWidth, setViewportWidth] = useState(900);
 
@@ -100,12 +122,21 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
     setLocalPaths(next);
   };
 
+  const selectPaths = useCallback((pathIds: string[]) => {
+    selectedPathIdsRef.current = pathIds;
+    setSelectedPathIds(pathIds);
+    onSelectionChange(pathIds);
+  }, [onSelectionChange]);
+
   useEffect(() => {
     if (dragRef.current) return;
     const next = clonePaths(paths);
     localPathsRef.current = next;
     setLocalPaths(next);
-  }, [paths]);
+    const available = new Set(next.map((path) => path.id));
+    const retained = selectedPathIdsRef.current.filter((id) => available.has(id));
+    if (retained.length !== selectedPathIdsRef.current.length) selectPaths(retained);
+  }, [paths, selectPaths]);
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -144,23 +175,38 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
     });
   };
 
-  function scaleSelection(factor: number) {
-    if (!selectedPathId) return;
-    const path = localPathsRef.current.find((value) => value.id === selectedPathId);
-    const bounds = selectedBounds(path);
-    if (!bounds) return;
-    const center = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
-    const next = localPathsRef.current.map((value) => value.id === selectedPathId
-      ? {
-          ...value,
-          points: value.points.map((point) => ({
-            x: center.x + (point.x - center.x) * factor,
-            y: center.y + (point.y - center.y) * factor,
-          })),
-        }
-      : value);
+  const commitTransform = (next: ToolPath[]) => {
     updateLocalPaths(next);
     onPathsChange(clonePaths(next));
+  };
+
+  function scaleSelection(factor: number) {
+    const pathIds = selectedPathIdsRef.current;
+    const bounds = boundsForSelection(localPathsRef.current, pathIds);
+    if (!bounds) return;
+    const center = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+    commitTransform(transformSelected(localPathsRef.current, pathIds, (point) => ({
+      x: center.x + (point.x - center.x) * factor,
+      y: center.y + (point.y - center.y) * factor,
+    })));
+  }
+
+  function rotateSelection(degrees: number) {
+    const pathIds = selectedPathIdsRef.current;
+    const bounds = boundsForSelection(localPathsRef.current, pathIds);
+    if (!bounds) return;
+    const center = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+    const radians = degrees * Math.PI / 180;
+    const cosine = Math.cos(radians);
+    const sine = Math.sin(radians);
+    commitTransform(transformSelected(localPathsRef.current, pathIds, (point) => {
+      const x = point.x - center.x;
+      const y = point.y - center.y;
+      return {
+        x: center.x + x * cosine - y * sine,
+        y: center.y + x * sine + y * cosine,
+      };
+    }));
   }
 
   useImperativeHandle(ref, () => ({
@@ -168,6 +214,7 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
     zoomOut: () => zoom(1.22),
     fit,
     scaleSelection,
+    rotateSelection,
   }));
 
   const screenToDrawing = (clientX: number, clientY: number): Point2D => {
@@ -179,24 +226,35 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
     const matrix = svg.getScreenCTM();
     if (!matrix) return { x: 0, y: 0 };
     const transformed = point.matrixTransform(matrix.inverse());
-    return { x: transformed.x, y: transformed.y };
-  };
-
-  const selectPath = (pathId: string | null) => {
-    setSelectedPathId(pathId);
-    onSelectionChange(pathId);
+    return { x: transformed.x, y: -transformed.y };
   };
 
   const startMove = (event: React.PointerEvent<SVGPathElement>, pathId: string) => {
+    if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     svgRef.current?.focus();
-    selectPath(pathId);
-    if (cornerMode !== "select") return;
+
+    if (cornerMode !== "select") {
+      selectPaths([pathId]);
+      return;
+    }
+
+    const current = selectedPathIdsRef.current;
+    if (event.shiftKey) {
+      const next = current.includes(pathId)
+        ? current.filter((id) => id !== pathId)
+        : [...current, pathId];
+      selectPaths(next);
+      return;
+    }
+
+    const active = current.includes(pathId) ? current : [pathId];
+    selectPaths(active);
     svgRef.current?.setPointerCapture(event.pointerId);
     dragRef.current = {
       kind: "move",
-      pathId,
+      pathIds: active,
       start: screenToDrawing(event.clientX, event.clientY),
       original: clonePaths(localPathsRef.current),
     };
@@ -213,40 +271,52 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
     const next = localPathsRef.current.map((path) => path.id === pathId
       ? applyCornerRelief(path, cornerIndex, bitDiameter, cornerMode)
       : path);
-    updateLocalPaths(next);
-    onPathsChange(clonePaths(next));
+    commitTransform(next);
   };
 
-  const startScale = (event: React.PointerEvent<SVGRectElement>, pathId: string) => {
+  const startScale = (event: React.PointerEvent<SVGRectElement>) => {
     event.preventDefault();
     event.stopPropagation();
     svgRef.current?.focus();
     svgRef.current?.setPointerCapture(event.pointerId);
-    const path = localPathsRef.current.find((value) => value.id === pathId);
-    const bounds = selectedBounds(path);
+    const pathIds = selectedPathIdsRef.current;
+    const bounds = boundsForSelection(localPathsRef.current, pathIds);
     if (!bounds) return;
     const center = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
     const drawingPoint = screenToDrawing(event.clientX, event.clientY);
-    const actualPoint = { x: drawingPoint.x, y: -drawingPoint.y };
     dragRef.current = {
       kind: "scale",
-      pathId,
+      pathIds,
       center,
-      startDistance: Math.max(0.001, Math.hypot(actualPoint.x - center.x, actualPoint.y - center.y)),
+      startDistance: Math.max(0.001, Math.hypot(drawingPoint.x - center.x, drawingPoint.y - center.y)),
       original: clonePaths(localPathsRef.current),
     };
   };
 
-  const startPan = (event: React.PointerEvent<SVGSVGElement>) => {
-    if (event.button !== 0) return;
+  const startWorkspaceDrag = (event: React.PointerEvent<SVGSVGElement>) => {
+    if (event.button !== 0 && event.button !== 1) return;
+    event.preventDefault();
     svgRef.current?.focus();
     svgRef.current?.setPointerCapture(event.pointerId);
-    selectPath(null);
-    dragRef.current = {
-      kind: "pan",
-      startClient: { x: event.clientX, y: event.clientY },
-      startViewBox: { ...viewBox },
+    if (event.button === 1 || event.altKey || cornerMode !== "select") {
+      dragRef.current = {
+        kind: "pan",
+        startClient: { x: event.clientX, y: event.clientY },
+        startViewBox: { ...viewBox },
+      };
+      return;
+    }
+
+    const start = screenToDrawing(event.clientX, event.clientY);
+    const drag: WindowDrag = {
+      kind: "window",
+      start,
+      current: start,
+      additive: event.shiftKey,
+      originalSelection: [...selectedPathIdsRef.current],
     };
+    dragRef.current = drag;
+    setSelectionWindow(drag);
   };
 
   const handlePointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
@@ -266,27 +336,49 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
     }
 
     const drawingPoint = screenToDrawing(event.clientX, event.clientY);
+    if (drag.kind === "window") {
+      drag.current = drawingPoint;
+      setSelectionWindow({ ...drag });
+      return;
+    }
     if (drag.kind === "move") {
       const deltaX = drawingPoint.x - drag.start.x;
-      const deltaY = -(drawingPoint.y - drag.start.y);
-      updateLocalPaths(drag.original.map((path) => path.id === drag.pathId
-        ? { ...path, points: path.points.map((point) => ({ x: point.x + deltaX, y: point.y + deltaY })) }
-        : path));
+      const deltaY = drawingPoint.y - drag.start.y;
+      updateLocalPaths(transformSelected(drag.original, drag.pathIds, (point) => ({
+        x: point.x + deltaX,
+        y: point.y + deltaY,
+      })));
       return;
     }
 
-    const actualPoint = { x: drawingPoint.x, y: -drawingPoint.y };
-    const distance = Math.hypot(actualPoint.x - drag.center.x, actualPoint.y - drag.center.y);
-    const scale = Math.max(0.05, Math.min(50, distance / drag.startDistance));
-    updateLocalPaths(drag.original.map((path) => path.id === drag.pathId
-      ? {
-          ...path,
-          points: path.points.map((point) => ({
-            x: drag.center.x + (point.x - drag.center.x) * scale,
-            y: drag.center.y + (point.y - drag.center.y) * scale,
-          })),
-        }
-      : path));
+    const currentDistance = Math.hypot(drawingPoint.x - drag.center.x, drawingPoint.y - drag.center.y);
+    const scale = Math.max(0.05, Math.min(50, currentDistance / drag.startDistance));
+    updateLocalPaths(transformSelected(drag.original, drag.pathIds, (point) => ({
+      x: drag.center.x + (point.x - drag.center.x) * scale,
+      y: drag.center.y + (point.y - drag.center.y) * scale,
+    })));
+  };
+
+  const finishWindowSelection = (drag: WindowDrag) => {
+    const minX = Math.min(drag.start.x, drag.current.x);
+    const maxX = Math.max(drag.start.x, drag.current.x);
+    const minY = Math.min(drag.start.y, drag.current.y);
+    const maxY = Math.max(drag.start.y, drag.current.y);
+    const threshold = (viewBox.width / Math.max(1, viewportWidth)) * 4;
+    if (maxX - minX < threshold && maxY - minY < threshold) {
+      if (!drag.additive) selectPaths([]);
+      return;
+    }
+
+    const crossing = drag.current.x < drag.start.x;
+    const matches = localPathsRef.current.filter((path) => {
+      const bounds = getBounds([path]);
+      if (crossing) {
+        return bounds.maxX >= minX && bounds.minX <= maxX && bounds.maxY >= minY && bounds.minY <= maxY;
+      }
+      return bounds.minX >= minX && bounds.maxX <= maxX && bounds.minY >= minY && bounds.maxY <= maxY;
+    }).map((path) => path.id);
+    selectPaths(drag.additive ? [...new Set([...drag.originalSelection, ...matches])] : matches);
   };
 
   const finishPointer = (event: React.PointerEvent<SVGSVGElement>) => {
@@ -296,16 +388,22 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
       svgRef.current.releasePointerCapture(event.pointerId);
     }
     dragRef.current = null;
-    if (drag.kind !== "pan") onPathsChange(clonePaths(localPathsRef.current));
+    if (drag.kind === "window") {
+      finishWindowSelection(drag);
+      setSelectionWindow(null);
+    } else if (drag.kind !== "pan") {
+      onPathsChange(clonePaths(localPathsRef.current));
+    }
   };
 
   const handleWheel = (event: React.WheelEvent<SVGSVGElement>) => {
     event.preventDefault();
     const cursor = screenToDrawing(event.clientX, event.clientY);
+    const svgCursor = { x: cursor.x, y: -cursor.y };
     const factor = event.deltaY > 0 ? 1.12 : 0.88;
     setViewBox((current) => ({
-      x: cursor.x - (cursor.x - current.x) * factor,
-      y: cursor.y - (cursor.y - current.y) * factor,
+      x: svgCursor.x - (svgCursor.x - current.x) * factor,
+      y: svgCursor.y - (svgCursor.y - current.y) * factor,
       width: Math.max(0.1, current.width * factor),
       height: Math.max(0.1, current.height * factor),
     }));
@@ -313,25 +411,31 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
 
   const handleKeyDown = (event: React.KeyboardEvent<SVGSVGElement>) => {
     if (event.key === "Escape") {
-      selectPath(null);
+      selectPaths([]);
+      setSelectionWindow(null);
+      dragRef.current = null;
       return;
     }
-    if (!selectedPathId || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    if (!selectedPathIds.length || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
     event.preventDefault();
     const amount = event.shiftKey ? 10 : 1;
     const delta = {
       x: event.key === "ArrowLeft" ? -amount : event.key === "ArrowRight" ? amount : 0,
       y: event.key === "ArrowDown" ? -amount : event.key === "ArrowUp" ? amount : 0,
     };
-    const next = localPathsRef.current.map((path) => path.id === selectedPathId
-      ? { ...path, points: path.points.map((point) => ({ x: point.x + delta.x, y: point.y + delta.y })) }
-      : path);
-    updateLocalPaths(next);
-    onPathsChange(clonePaths(next));
+    commitTransform(transformSelected(localPathsRef.current, selectedPathIds, (point) => ({
+      x: point.x + delta.x,
+      y: point.y + delta.y,
+    })));
   };
 
-  const selectedPath = localPaths.find((path) => path.id === selectedPathId);
-  const selection = useMemo(() => selectedBounds(selectedPath), [selectedPath]);
+  const selectedPath = selectedPathIds.length === 1
+    ? localPaths.find((path) => path.id === selectedPathIds[0])
+    : undefined;
+  const selection = useMemo(
+    () => boundsForSelection(localPaths, selectedPathIds),
+    [localPaths, selectedPathIds],
+  );
   const cornerIndices = useMemo(
     () => selectedPath && cornerMode !== "select" ? getCornerIndices(selectedPath) : [],
     [selectedPath, cornerMode],
@@ -344,18 +448,25 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
     { x: selection.maxX, y: -selection.minY, cursor: "nwse-resize" },
     { x: selection.minX, y: -selection.minY, cursor: "nesw-resize" },
   ] : [];
+  const windowBounds = selectionWindow ? {
+    minX: Math.min(selectionWindow.start.x, selectionWindow.current.x),
+    maxX: Math.max(selectionWindow.start.x, selectionWindow.current.x),
+    minY: Math.min(selectionWindow.start.y, selectionWindow.current.y),
+    maxY: Math.max(selectionWindow.start.y, selectionWindow.current.y),
+    crossing: selectionWindow.current.x < selectionWindow.start.x,
+  } : null;
 
   return (
     <div className="toolpath-editor">
       <svg
         ref={svgRef}
-        className="toolpath-editor-svg"
+        className={`toolpath-editor-svg is-${cornerMode}`}
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
         preserveAspectRatio="xMidYMid meet"
         tabIndex={0}
         role="application"
         aria-label="2Dツールパス編集"
-        onPointerDown={startPan}
+        onPointerDown={startWorkspaceDrag}
         onPointerMove={handlePointerMove}
         onPointerUp={finishPointer}
         onPointerCancel={finishPointer}
@@ -386,7 +497,7 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
             />
             <path
               d={pathData(path)}
-              className={`editor-path${selectedPathId === path.id ? " is-selected" : ""}`}
+              className={`editor-path${selectedPathIds.includes(path.id) ? " is-selected" : ""}`}
               vectorEffect="non-scaling-stroke"
               pointerEvents="none"
             />
@@ -411,7 +522,7 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
           );
         })}
 
-        {selection && selectedPath && (
+        {selection && (
           <g className="editor-selection">
             <rect
               x={selection.minX}
@@ -430,12 +541,24 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
                 width={handleSize}
                 height={handleSize}
                 style={{ cursor: handle.cursor }}
-                onPointerDown={(event) => startScale(event, selectedPath.id)}
+                onPointerDown={startScale}
               >
                 <title>拡大・縮小</title>
               </rect>
             ))}
           </g>
+        )}
+
+        {windowBounds && (
+          <rect
+            className={`editor-selection-window${windowBounds.crossing ? " is-crossing" : ""}`}
+            x={windowBounds.minX}
+            y={-windowBounds.maxY}
+            width={Math.max(0.001, windowBounds.maxX - windowBounds.minX)}
+            height={Math.max(0.001, windowBounds.maxY - windowBounds.minY)}
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="none"
+          />
         )}
       </svg>
     </div>
