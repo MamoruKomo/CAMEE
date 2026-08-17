@@ -21,6 +21,7 @@ import {
   MousePointer2,
   Pencil,
   Play,
+  Plus,
   RotateCcw,
   RotateCw,
   Rotate3d,
@@ -58,8 +59,26 @@ import {
 
 type SectionName = "file" | "cut" | "bit" | "material" | "settings";
 type CornerEditMode = "select" | CornerReliefType;
-type NumericCamSetting = Exclude<keyof CamSettings, "rampEnabled">;
+type NumericCamSetting = "finalDepth" | "stepDown" | "bitDiameter" | "feedRate" | "plungeRate" | "retractHeight" | "rapidFeed" | "rampLength" | "spindleRpm" | "fluteCount";
 type ExportMode = "combined" | "separate";
+type BitType = "straight" | "v" | "ball-nose" | "crown" | "drill" | "custom";
+
+type BitDefinition = {
+  id: string;
+  name: string;
+  type: BitType;
+  cuttingDiameter: number;
+  shankDiameter: number;
+  fluteLength: number;
+  overallLength: number;
+  fluteCount: number;
+  spindleRpm: number;
+  feedRate: number;
+  plungeRate: number;
+  vAngle: number;
+  tipDiameter: number;
+  notes: string;
+};
 
 type CalculatedToolpath = {
   id: string;
@@ -87,6 +106,8 @@ type SavedProject = {
   exportMode: ExportMode;
   toolpathName: string;
   view: "2d" | "3d";
+  bitLibrary?: BitDefinition[];
+  activeBitId?: string;
 };
 
 type SaveStatus = "loading" | "saving" | "saved" | "error";
@@ -94,6 +115,50 @@ type SaveStatus = "loading" | "saving" | "saved" | "error";
 const PROJECT_DB_NAME = "camee-projects";
 const PROJECT_STORE_NAME = "projects";
 const CURRENT_PROJECT_KEY = "current-project";
+
+const bitTypeLabels: Record<BitType, string> = {
+  straight: "ストレート",
+  v: "Vビット",
+  "ball-nose": "ボールノーズ",
+  crown: "クラウン",
+  drill: "ドリル",
+  custom: "カスタム",
+};
+
+const defaultCamSettings: CamSettings = {
+  finalDepth: 3,
+  stepDown: 1,
+  bitDiameter: 3,
+  toolName: "ストレート 3mm",
+  toolType: "straight",
+  spindleRpm: 18000,
+  fluteCount: 2,
+  feedRate: 1000,
+  plungeRate: 300,
+  retractHeight: 2,
+  rapidFeed: 2000,
+  rampEnabled: false,
+  rampLength: 12,
+};
+
+const defaultBitLibrary: BitDefinition[] = [
+  { id: "straight-3", name: "ストレート 3mm", type: "straight", cuttingDiameter: 3, shankDiameter: 3.175, fluteLength: 12, overallLength: 38, fluteCount: 2, spindleRpm: 18000, feedRate: 1000, plungeRate: 300, vAngle: 0, tipDiameter: 0, notes: "" },
+  { id: "v-60", name: "Vビット 60°", type: "v", cuttingDiameter: 12, shankDiameter: 3.175, fluteLength: 12, overallLength: 38, fluteCount: 2, spindleRpm: 18000, feedRate: 800, plungeRate: 250, vAngle: 60, tipDiameter: 0.2, notes: "" },
+  { id: "ball-3", name: "ボールノーズ 3mm", type: "ball-nose", cuttingDiameter: 3, shankDiameter: 3.175, fluteLength: 12, overallLength: 38, fluteCount: 2, spindleRpm: 18000, feedRate: 900, plungeRate: 250, vAngle: 0, tipDiameter: 0, notes: "" },
+  { id: "crown-6", name: "クラウン 6mm", type: "crown", cuttingDiameter: 6, shankDiameter: 6, fluteLength: 8, overallLength: 50, fluteCount: 2, spindleRpm: 16000, feedRate: 700, plungeRate: 200, vAngle: 0, tipDiameter: 0, notes: "" },
+];
+
+function settingsForBit(bit: BitDefinition): Pick<CamSettings, "bitDiameter" | "toolName" | "toolType" | "spindleRpm" | "fluteCount" | "feedRate" | "plungeRate"> {
+  return {
+    bitDiameter: bit.cuttingDiameter,
+    toolName: bit.name,
+    toolType: bit.type,
+    spindleRpm: bit.spindleRpm,
+    fluteCount: bit.fluteCount,
+    feedRate: bit.feedRate,
+    plungeRate: bit.plungeRate,
+  };
+}
 
 const materialOrigins: Array<{ id: Exclude<MaterialOrigin, "dxf">; label: string }> = [
   { id: "upper-left", label: "左上" },
@@ -288,17 +353,10 @@ export default function Home() {
   const [pathNotice, setPathNotice] = useState("");
   const [showClosePanel, setShowClosePanel] = useState(false);
   const [editorRevision, setEditorRevision] = useState(0);
-  const [settings, setSettings] = useState<CamSettings>({
-    finalDepth: 3,
-    stepDown: 1,
-    bitDiameter: 3,
-    feedRate: 1000,
-    plungeRate: 300,
-    retractHeight: 2,
-    rapidFeed: 2000,
-    rampEnabled: false,
-    rampLength: 12,
-  });
+  const [bitLibrary, setBitLibrary] = useState<BitDefinition[]>(() => defaultBitLibrary.map((bit) => ({ ...bit })));
+  const [activeBitId, setActiveBitId] = useState(defaultBitLibrary[0].id);
+  const [bitNotice, setBitNotice] = useState("");
+  const [settings, setSettings] = useState<CamSettings>(defaultCamSettings);
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const previewRef = useRef<PreviewHandle>(null);
@@ -322,7 +380,10 @@ export default function Home() {
         setDrawing(saved.drawing);
         setDisplayPaths(clonePaths(saved.displayPaths));
         setCalculatedToolpaths(saved.calculatedToolpaths);
-        setSettings(saved.settings);
+        setSettings({ ...defaultCamSettings, ...saved.settings });
+        const restoredBits = saved.bitLibrary?.length ? saved.bitLibrary : defaultBitLibrary;
+        setBitLibrary(restoredBits.map((bit) => ({ ...bit })));
+        setActiveBitId(restoredBits.some((bit) => bit.id === saved.activeBitId) ? saved.activeBitId! : restoredBits[0].id);
         setOrigin(saved.origin);
         setMaterialWidth(saved.materialWidth);
         setMaterialHeight(saved.materialHeight);
@@ -395,6 +456,79 @@ export default function Home() {
       return 0;
     }
   }, [selectedPaths, settings]);
+  const activeBit = useMemo(
+    () => bitLibrary.find((bit) => bit.id === activeBitId) ?? bitLibrary[0],
+    [activeBitId, bitLibrary],
+  );
+
+  const selectBit = (id: string) => {
+    const bit = bitLibrary.find((item) => item.id === id);
+    if (!bit) return;
+    setActiveBitId(bit.id);
+    setSettings((current) => ({ ...current, ...settingsForBit(bit) }));
+    setBitNotice("");
+  };
+
+  const updateBitNumber = (key: "cuttingDiameter" | "shankDiameter" | "fluteLength" | "overallLength" | "fluteCount" | "spindleRpm" | "feedRate" | "plungeRate" | "vAngle" | "tipDiameter", value: number) => {
+    if (!activeBit) return;
+    setBitLibrary((current) => current.map((bit) => bit.id === activeBit.id ? { ...bit, [key]: value } : bit));
+    const settingKeys: Partial<Record<typeof key, NumericCamSetting>> = {
+      cuttingDiameter: "bitDiameter",
+      fluteCount: "fluteCount",
+      spindleRpm: "spindleRpm",
+      feedRate: "feedRate",
+      plungeRate: "plungeRate",
+    };
+    const settingKey = settingKeys[key];
+    if (settingKey) setSettings((current) => ({ ...current, [settingKey]: value }));
+    setBitNotice("");
+  };
+
+  const updateBitName = (name: string) => {
+    if (!activeBit) return;
+    setBitLibrary((current) => current.map((bit) => bit.id === activeBit.id ? { ...bit, name } : bit));
+    setSettings((current) => ({ ...current, toolName: name }));
+    setBitNotice("");
+  };
+
+  const updateBitType = (type: BitType) => {
+    if (!activeBit) return;
+    setBitLibrary((current) => current.map((bit) => bit.id === activeBit.id ? { ...bit, type } : bit));
+    setSettings((current) => ({ ...current, toolType: type }));
+    setBitNotice("");
+  };
+
+  const updateBitNotes = (notes: string) => {
+    if (!activeBit) return;
+    setBitLibrary((current) => current.map((bit) => bit.id === activeBit.id ? { ...bit, notes } : bit));
+    setBitNotice("");
+  };
+
+  const addBit = () => {
+    const source = activeBit ?? defaultBitLibrary[0];
+    const bit: BitDefinition = {
+      ...source,
+      id: crypto.randomUUID(),
+      name: `${bitTypeLabels[source.type]} 新規ビット`,
+    };
+    setBitLibrary((current) => [...current, bit]);
+    setActiveBitId(bit.id);
+    setSettings((current) => ({ ...current, ...settingsForBit(bit) }));
+    setBitNotice("");
+  };
+
+  const deleteBit = () => {
+    if (!activeBit || bitLibrary.length <= 1) {
+      setBitNotice("ライブラリには1本以上のビットが必要です");
+      return;
+    }
+    const next = bitLibrary.filter((bit) => bit.id !== activeBit.id);
+    const replacement = next[0];
+    setBitLibrary(next);
+    setActiveBitId(replacement.id);
+    setSettings((current) => ({ ...current, ...settingsForBit(replacement) }));
+    setBitNotice("");
+  };
 
   const projectSnapshot = useMemo<SavedProject>(() => ({
     version: 1,
@@ -411,7 +545,11 @@ export default function Home() {
     exportMode,
     toolpathName,
     view,
+    bitLibrary,
+    activeBitId,
   }), [
+    activeBitId,
+    bitLibrary,
     calculatedToolpaths,
     displayPaths,
     drawing,
@@ -441,6 +579,11 @@ export default function Home() {
       if (saveSequenceRef.current === sequence) setSaveStatus("error");
     }
   }, [projectSnapshot, storageReady]);
+
+  const saveBitToLibrary = () => {
+    setBitNotice("ビットライブラリに保存しました");
+    void saveProject();
+  };
 
   useEffect(() => {
     if (!storageReady) return;
@@ -738,13 +881,58 @@ export default function Home() {
         <section className="panel-section" ref={(node) => { sectionRefs.current.bit = node; }}>
           <div className="section-heading">
             <span className="step-number">3</span>
-            <div><h2>ビット</h2><p>ストレートビット</p></div>
+            <div><h2>ビット</h2><p>{activeBit ? bitTypeLabels[activeBit.type] : "ビットを選択"}</p></div>
           </div>
-          <div className="field-grid">
-            <NumberField label="直径" value={settings.bitDiameter} unit="mm" onChange={(value) => updateSetting("bitDiameter", value)} />
-            <NumberField label="送り速度" value={settings.feedRate} unit="mm/min" min={1} step={50} onChange={(value) => updateSetting("feedRate", value)} />
-            <NumberField label="切り込み速度" value={settings.plungeRate} unit="mm/min" min={1} step={50} onChange={(value) => updateSetting("plungeRate", value)} />
-          </div>
+          {activeBit && (
+            <>
+              <div className="bit-library-picker">
+                <label className="select-field">
+                  <span>登録ビット</span>
+                  <select value={activeBit.id} onChange={(event) => selectBit(event.target.value)}>
+                    {bitLibrary.map((bit) => <option key={bit.id} value={bit.id}>{bit.name}</option>)}
+                  </select>
+                </label>
+                <IconButton label="新しいビットを追加" onClick={addBit}><Plus size={17} /></IconButton>
+                <IconButton label="選択中のビットを削除" onClick={deleteBit}><Trash2 size={16} /></IconButton>
+              </div>
+              <label className="bit-name-field">
+                <span>ビット名</span>
+                <input value={activeBit.name} maxLength={60} onChange={(event) => updateBitName(event.target.value)} />
+              </label>
+              <label className="select-field bit-type-field">
+                <span>種類</span>
+                <select value={activeBit.type} onChange={(event) => updateBitType(event.target.value as BitType)}>
+                  {(Object.keys(bitTypeLabels) as BitType[]).map((type) => <option key={type} value={type}>{bitTypeLabels[type]}</option>)}
+                </select>
+              </label>
+              <div className="field-grid is-three bit-dimensions">
+                <NumberField label={activeBit.type === "v" ? "基準径" : "刃径"} value={activeBit.cuttingDiameter} unit="mm" onChange={(value) => updateBitNumber("cuttingDiameter", value)} />
+                <NumberField label="シャンク径" value={activeBit.shankDiameter} unit="mm" onChange={(value) => updateBitNumber("shankDiameter", value)} />
+                <NumberField label="刃長" value={activeBit.fluteLength} unit="mm" onChange={(value) => updateBitNumber("fluteLength", value)} />
+                <NumberField label="全長" value={activeBit.overallLength} unit="mm" onChange={(value) => updateBitNumber("overallLength", value)} />
+                <NumberField label="刃数" value={activeBit.fluteCount} unit="枚" min={1} step={1} onChange={(value) => updateBitNumber("fluteCount", value)} />
+                <NumberField label="主軸回転数" value={activeBit.spindleRpm} unit="rpm" min={1} step={500} onChange={(value) => updateBitNumber("spindleRpm", value)} />
+              </div>
+              {activeBit.type === "v" && (
+                <div className="field-grid bit-v-fields">
+                  <NumberField label="刃先角度" value={activeBit.vAngle} unit="deg" min={1} step={1} onChange={(value) => updateBitNumber("vAngle", value)} />
+                  <NumberField label="先端径" value={activeBit.tipDiameter} unit="mm" min={0} step={0.1} onChange={(value) => updateBitNumber("tipDiameter", value)} />
+                </div>
+              )}
+              <div className="field-grid bit-cutting-fields">
+                <NumberField label="送り速度" value={activeBit.feedRate} unit="mm/min" min={1} step={50} onChange={(value) => updateBitNumber("feedRate", value)} />
+                <NumberField label="切り込み速度" value={activeBit.plungeRate} unit="mm/min" min={1} step={50} onChange={(value) => updateBitNumber("plungeRate", value)} />
+              </div>
+              <label className="bit-notes-field">
+                <span>メモ</span>
+                <textarea value={activeBit.notes} rows={2} maxLength={240} onChange={(event) => updateBitNotes(event.target.value)} />
+              </label>
+              <button type="button" className="bit-save-button" onClick={saveBitToLibrary}>
+                <Save size={16} /><span>ビットライブラリに保存</span>
+              </button>
+              {bitNotice && <p className="field-note path-notice"><Check size={13} /> {bitNotice}</p>}
+            </>
+          )}
         </section>
 
         <section className="panel-section" ref={(node) => { sectionRefs.current.material = node; }}>

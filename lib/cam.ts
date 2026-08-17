@@ -46,6 +46,10 @@ export type CamSettings = {
   finalDepth: number;
   stepDown: number;
   bitDiameter: number;
+  toolName?: string;
+  toolType?: string;
+  spindleRpm?: number;
+  fluteCount?: number;
   feedRate: number;
   plungeRate: number;
   retractHeight: number;
@@ -645,7 +649,9 @@ export function generateGcode(paths: ToolPath[], settings: CamSettings, fileName
   const lines = [
     "; CNC V4.0",
     `; Source: ${fileName.replace(/[^\x20-\x7E]/g, "_")}`,
-    `; Tool: straight D${format(settings.bitDiameter)} mm`,
+    `; Tool: ${(settings.toolType ?? "straight").replace(/[^\x20-\x7E]/g, "_")} D${format(settings.bitDiameter)} mm`,
+    ...(settings.toolName ? [`; Tool name: ${settings.toolName.replace(/[^\x20-\x7E]/g, "_")}`] : []),
+    ...(settings.spindleRpm ? [`; Spindle: ${Math.round(settings.spindleRpm)} RPM`] : []),
     "; Z0 = material top. Start the router manually before cycle start.",
     "G21",
     "G90",
