@@ -35,6 +35,7 @@ import {
   UnfoldHorizontal,
   Undo2,
   Upload,
+  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -356,6 +357,7 @@ export default function Home() {
   const [bitLibrary, setBitLibrary] = useState<BitDefinition[]>(() => defaultBitLibrary.map((bit) => ({ ...bit })));
   const [activeBitId, setActiveBitId] = useState(defaultBitLibrary[0].id);
   const [bitNotice, setBitNotice] = useState("");
+  const [isBitEditorOpen, setIsBitEditorOpen] = useState(false);
   const [settings, setSettings] = useState<CamSettings>(defaultCamSettings);
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLElement>(null);
@@ -515,6 +517,7 @@ export default function Home() {
     setActiveBitId(bit.id);
     setSettings((current) => ({ ...current, ...settingsForBit(bit) }));
     setBitNotice("");
+    setIsBitEditorOpen(true);
   };
 
   const deleteBit = () => {
@@ -583,6 +586,7 @@ export default function Home() {
   const saveBitToLibrary = () => {
     setBitNotice("ビットライブラリに保存しました");
     void saveProject();
+    setIsBitEditorOpen(false);
   };
 
   useEffect(() => {
@@ -884,54 +888,24 @@ export default function Home() {
             <div><h2>ビット</h2><p>{activeBit ? bitTypeLabels[activeBit.type] : "ビットを選択"}</p></div>
           </div>
           {activeBit && (
-            <>
-              <div className="bit-library-picker">
-                <label className="select-field">
-                  <span>登録ビット</span>
-                  <select value={activeBit.id} onChange={(event) => selectBit(event.target.value)}>
-                    {bitLibrary.map((bit) => <option key={bit.id} value={bit.id}>{bit.name}</option>)}
-                  </select>
-                </label>
-                <IconButton label="新しいビットを追加" onClick={addBit}><Plus size={17} /></IconButton>
-                <IconButton label="選択中のビットを削除" onClick={deleteBit}><Trash2 size={16} /></IconButton>
-              </div>
-              <label className="bit-name-field">
-                <span>ビット名</span>
-                <input value={activeBit.name} maxLength={60} onChange={(event) => updateBitName(event.target.value)} />
-              </label>
-              <label className="select-field bit-type-field">
-                <span>種類</span>
-                <select value={activeBit.type} onChange={(event) => updateBitType(event.target.value as BitType)}>
-                  {(Object.keys(bitTypeLabels) as BitType[]).map((type) => <option key={type} value={type}>{bitTypeLabels[type]}</option>)}
+            <div className="bit-compact-card">
+              <label className="select-field">
+                <span>登録ビット</span>
+                <select value={activeBit.id} onChange={(event) => selectBit(event.target.value)}>
+                  {bitLibrary.map((bit) => <option key={bit.id} value={bit.id}>{bit.name}</option>)}
                 </select>
               </label>
-              <div className="field-grid is-three bit-dimensions">
-                <NumberField label={activeBit.type === "v" ? "基準径" : "刃径"} value={activeBit.cuttingDiameter} unit="mm" onChange={(value) => updateBitNumber("cuttingDiameter", value)} />
-                <NumberField label="シャンク径" value={activeBit.shankDiameter} unit="mm" onChange={(value) => updateBitNumber("shankDiameter", value)} />
-                <NumberField label="刃長" value={activeBit.fluteLength} unit="mm" onChange={(value) => updateBitNumber("fluteLength", value)} />
-                <NumberField label="全長" value={activeBit.overallLength} unit="mm" onChange={(value) => updateBitNumber("overallLength", value)} />
-                <NumberField label="刃数" value={activeBit.fluteCount} unit="枚" min={1} step={1} onChange={(value) => updateBitNumber("fluteCount", value)} />
-                <NumberField label="主軸回転数" value={activeBit.spindleRpm} unit="rpm" min={1} step={500} onChange={(value) => updateBitNumber("spindleRpm", value)} />
+              <div className="bit-compact-details">
+                <span>{bitTypeLabels[activeBit.type]}</span>
+                <span>Ø{activeBit.cuttingDiameter} mm</span>
+                <span>{activeBit.feedRate} mm/min</span>
+                <span>{activeBit.spindleRpm} rpm</span>
               </div>
-              {activeBit.type === "v" && (
-                <div className="field-grid bit-v-fields">
-                  <NumberField label="刃先角度" value={activeBit.vAngle} unit="deg" min={1} step={1} onChange={(value) => updateBitNumber("vAngle", value)} />
-                  <NumberField label="先端径" value={activeBit.tipDiameter} unit="mm" min={0} step={0.1} onChange={(value) => updateBitNumber("tipDiameter", value)} />
-                </div>
-              )}
-              <div className="field-grid bit-cutting-fields">
-                <NumberField label="送り速度" value={activeBit.feedRate} unit="mm/min" min={1} step={50} onChange={(value) => updateBitNumber("feedRate", value)} />
-                <NumberField label="切り込み速度" value={activeBit.plungeRate} unit="mm/min" min={1} step={50} onChange={(value) => updateBitNumber("plungeRate", value)} />
+              <div className="bit-compact-actions">
+                <IconButton label="ビットを編集" onClick={() => setIsBitEditorOpen(true)}><Pencil size={17} /></IconButton>
+                <IconButton label="新しいビットを追加" onClick={addBit}><Plus size={18} /></IconButton>
               </div>
-              <label className="bit-notes-field">
-                <span>メモ</span>
-                <textarea value={activeBit.notes} rows={2} maxLength={240} onChange={(event) => updateBitNotes(event.target.value)} />
-              </label>
-              <button type="button" className="bit-save-button" onClick={saveBitToLibrary}>
-                <Save size={16} /><span>ビットライブラリに保存</span>
-              </button>
-              {bitNotice && <p className="field-note path-notice"><Check size={13} /> {bitNotice}</p>}
-            </>
+            </div>
           )}
         </section>
 
@@ -999,6 +973,74 @@ export default function Home() {
           )}
         </div>
       </aside>
+
+      {isBitEditorOpen && activeBit && (
+        <div className="bit-editor-overlay" role="presentation" onPointerDown={() => setIsBitEditorOpen(false)}>
+          <section
+            className="bit-editor-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="ビットの編集"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <div className="bit-editor-header">
+              <div><Drill size={18} /><h2>ビットを編集</h2></div>
+              <IconButton label="ビット編集を閉じる" onClick={() => setIsBitEditorOpen(false)}><X size={18} /></IconButton>
+            </div>
+            <div className="bit-editor-body">
+              <div className="bit-library-picker">
+                <label className="select-field">
+                  <span>登録ビット</span>
+                  <select value={activeBit.id} onChange={(event) => selectBit(event.target.value)}>
+                    {bitLibrary.map((bit) => <option key={bit.id} value={bit.id}>{bit.name}</option>)}
+                  </select>
+                </label>
+                <IconButton label="新しいビットを追加" onClick={addBit}><Plus size={17} /></IconButton>
+                <IconButton label="選択中のビットを削除" onClick={deleteBit}><Trash2 size={16} /></IconButton>
+              </div>
+              <label className="bit-name-field">
+                <span>ビット名</span>
+                <input value={activeBit.name} maxLength={60} onChange={(event) => updateBitName(event.target.value)} />
+              </label>
+              <label className="select-field bit-type-field">
+                <span>種類</span>
+                <select value={activeBit.type} onChange={(event) => updateBitType(event.target.value as BitType)}>
+                  {(Object.keys(bitTypeLabels) as BitType[]).map((type) => <option key={type} value={type}>{bitTypeLabels[type]}</option>)}
+                </select>
+              </label>
+              <div className="field-grid is-three bit-dimensions">
+                <NumberField label={activeBit.type === "v" ? "基準径" : "刃径"} value={activeBit.cuttingDiameter} unit="mm" onChange={(value) => updateBitNumber("cuttingDiameter", value)} />
+                <NumberField label="シャンク径" value={activeBit.shankDiameter} unit="mm" onChange={(value) => updateBitNumber("shankDiameter", value)} />
+                <NumberField label="刃長" value={activeBit.fluteLength} unit="mm" onChange={(value) => updateBitNumber("fluteLength", value)} />
+                <NumberField label="全長" value={activeBit.overallLength} unit="mm" onChange={(value) => updateBitNumber("overallLength", value)} />
+                <NumberField label="刃数" value={activeBit.fluteCount} unit="枚" min={1} step={1} onChange={(value) => updateBitNumber("fluteCount", value)} />
+                <NumberField label="主軸回転数" value={activeBit.spindleRpm} unit="rpm" min={1} step={500} onChange={(value) => updateBitNumber("spindleRpm", value)} />
+              </div>
+              {activeBit.type === "v" && (
+                <div className="field-grid bit-v-fields">
+                  <NumberField label="刃先角度" value={activeBit.vAngle} unit="deg" min={1} step={1} onChange={(value) => updateBitNumber("vAngle", value)} />
+                  <NumberField label="先端径" value={activeBit.tipDiameter} unit="mm" min={0} step={0.1} onChange={(value) => updateBitNumber("tipDiameter", value)} />
+                </div>
+              )}
+              <div className="field-grid bit-cutting-fields">
+                <NumberField label="送り速度" value={activeBit.feedRate} unit="mm/min" min={1} step={50} onChange={(value) => updateBitNumber("feedRate", value)} />
+                <NumberField label="切り込み速度" value={activeBit.plungeRate} unit="mm/min" min={1} step={50} onChange={(value) => updateBitNumber("plungeRate", value)} />
+              </div>
+              <label className="bit-notes-field">
+                <span>メモ</span>
+                <textarea value={activeBit.notes} rows={3} maxLength={240} onChange={(event) => updateBitNotes(event.target.value)} />
+              </label>
+              {bitNotice && <p className="field-note path-notice"><Check size={13} /> {bitNotice}</p>}
+            </div>
+            <div className="bit-editor-footer">
+              <button type="button" className="cancel-edit-button" onClick={() => setIsBitEditorOpen(false)}>キャンセル</button>
+              <button type="button" className="bit-save-button" onClick={saveBitToLibrary}>
+                <Save size={16} /><span>保存</span>
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       <section className="workspace" aria-label="プレビュー">
         <div className="view-switch" aria-label="表示切り替え">

@@ -125,6 +125,13 @@ button { color: inherit; }
 .bit-library-picker .icon-button { width: 32px; height: 36px; color: #5f6b70; border: 1px solid #c9d1d3; border-radius: 4px; background: white; }
 .bit-library-picker .icon-button:hover { border-color: var(--cyan-dark); color: #075b67; background: #ecfafb; }
 .bit-library-picker .icon-button:last-child:hover { border-color: #d9938d; color: #b33c31; background: #fff4f2; }
+.bit-compact-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; padding: 11px; border: 1px solid #cbd3d5; border-radius: 5px; background: #f7f9f9; }
+.bit-compact-card .select-field { min-width: 0; }
+.bit-compact-details { display: flex; grid-column: 1; flex-wrap: wrap; gap: 5px 8px; color: #677378; font-size: 9px; }
+.bit-compact-details span + span { padding-left: 8px; border-left: 1px solid #d3dadd; }
+.bit-compact-actions { display: flex; grid-column: 2; grid-row: 1 / span 2; gap: 3px; }
+.bit-compact-actions .icon-button { width: 32px; height: 32px; border: 1px solid #b8c2c5; border-radius: 4px; background: white; color: #526167; }
+.bit-compact-actions .icon-button:hover { border-color: var(--cyan-dark); color: #075b67; background: #ecfafb; }
 .bit-name-field, .bit-notes-field { display: flex; flex-direction: column; gap: 6px; margin-top: 11px; color: #566166; font-size: 10px; }
 .bit-name-field input, .bit-notes-field textarea { width: 100%; border: 1px solid #c9d1d3; border-radius: 4px; background: white; color: var(--ink); font-size: 11px; }
 .bit-name-field input { height: 34px; padding: 0 9px; font-weight: 700; }
@@ -133,6 +140,20 @@ button { color: inherit; }
 .bit-dimensions, .bit-v-fields, .bit-cutting-fields { margin-top: 11px; }
 .bit-save-button { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; height: 36px; margin-top: 11px; border: 1px solid #aeb9bc; border-radius: 4px; background: #f2f5f5; color: #344247; font-size: 10px; font-weight: 700; cursor: pointer; }
 .bit-save-button:hover { border-color: var(--cyan-dark); color: #075b67; background: #ecfafb; }
+.bit-editor-overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 24px; background: rgba(18,30,34,.42); }
+.bit-editor-dialog { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: min(620px, 100%); max-height: min(760px, calc(100vh - 48px)); border: 1px solid #aeb9bc; border-radius: 6px; background: white; box-shadow: 0 20px 60px rgba(17,31,35,.3); }
+.bit-editor-header { display: flex; align-items: center; justify-content: space-between; min-height: 54px; padding: 0 12px 0 16px; border-bottom: 1px solid #d5dcde; }
+.bit-editor-header > div { display: flex; align-items: center; gap: 8px; }
+.bit-editor-header h2 { margin: 0; font-size: 13px; }
+.bit-editor-header .icon-button { width: 32px; height: 32px; color: #5d686d; }
+.bit-editor-header .icon-button:hover { background: #eef2f2; }
+.bit-editor-body { overflow: auto; padding: 16px; scrollbar-width: thin; }
+.bit-editor-body .bit-library-picker { max-width: 100%; }
+.bit-editor-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid #d5dcde; background: #f7f9f9; }
+.bit-editor-footer .cancel-edit-button { width: auto; height: 36px; padding: 0 10px; border: 1px solid #c4ccce; border-radius: 4px; background: white; color: #5c686d; font-size: 10px; text-decoration: none; }
+.bit-editor-footer .cancel-edit-button:hover { border-color: #a7b2b5; background: #eef2f2; }
+.bit-editor-footer .bit-save-button { width: 110px; margin: 0; border-color: var(--cyan-dark); background: var(--cyan); color: #083b42; }
+.bit-editor-footer .bit-save-button:hover { background: #45cddd; }
 .field-note { display: flex; align-items: flex-start; gap: 6px; margin: 10px 0 0; color: #778286; font-size: 9px; line-height: 1.45; }
 .field-note svg { flex: 0 0 auto; margin-top: 1px; }
 .calculate-area { position: sticky; bottom: 0; z-index: 2; display: grid; grid-template-columns: 1fr auto; gap: 9px 10px; padding: 14px 18px 18px; border-top: 1px solid #cbd3d5; background: rgba(255,255,255,.98); box-shadow: 0 -5px 14px rgba(32,48,53,.06); }
@@ -247,6 +268,8 @@ button { color: inherit; }
   .calculate-area { position: static; }
   .toolpath-panel { grid-column: 1; grid-row: 5; min-height: 360px; border-top: 1px solid #c4ccce; border-left: 0; }
   .toolpath-list { max-height: 420px; }
+  .bit-editor-overlay { align-items: end; padding: 0; }
+  .bit-editor-dialog { width: 100%; max-height: min(82vh, 720px); border-right: 0; border-bottom: 0; border-left: 0; border-radius: 7px 7px 0 0; }
   .statusbar { gap: 10px; overflow: hidden; }
   .statusbar span:nth-child(2), .statusbar span:nth-child(3) { display: none; }
 }
