@@ -103,6 +103,27 @@ function transformSelected(
     : path);
 }
 
+function niceTickStep(range: number) {
+  const rough = Math.max(0.001, range / 10);
+  const magnitude = 10 ** Math.floor(Math.log10(rough));
+  const normalized = rough / magnitude;
+  const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return multiplier * magnitude;
+}
+
+function tickValues(min: number, max: number, step: number) {
+  const values: number[] = [];
+  const start = Math.ceil((min - 1e-9) / step) * step;
+  for (let value = start; value <= max + 1e-9 && values.length < 100; value += step) {
+    values.push(Math.abs(value) < step * 0.001 ? 0 : value);
+  }
+  return values;
+}
+
+function formatGuideValue(value: number, step: number) {
+  return value.toFixed(step < 1 ? 1 : 0);
+}
+
 export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function ToolpathEditor2D(
   { paths, boardBounds, bitDiameter, cornerMode, onPathsChange, onSelectionChange },
   ref,
@@ -441,7 +462,12 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
     [selectedPath, cornerMode],
   );
   const handleSize = Math.max(0.01, (viewBox.width / viewportWidth) * 10);
-  const boardMargin = Math.max(5, Math.max(boardBounds.width, boardBounds.height) * 0.025);
+  const guideOffset = handleSize * 2.2;
+  const guideTickSize = handleSize * 0.55;
+  const xTickStep = niceTickStep(boardBounds.width);
+  const yTickStep = niceTickStep(boardBounds.height);
+  const xTicks = tickValues(boardBounds.minX, boardBounds.maxX, xTickStep);
+  const yTicks = tickValues(boardBounds.minY, boardBounds.maxY, yTickStep);
   const handles = selection ? [
     { x: selection.minX, y: -selection.maxY, cursor: "nwse-resize" },
     { x: selection.maxX, y: -selection.maxY, cursor: "nesw-resize" },
@@ -475,12 +501,82 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
       >
         <rect
           className="editor-board"
-          x={boardBounds.minX - boardMargin}
-          y={-boardBounds.maxY - boardMargin}
-          width={Math.max(1, boardBounds.width + boardMargin * 2)}
-          height={Math.max(1, boardBounds.height + boardMargin * 2)}
+          x={boardBounds.minX}
+          y={-boardBounds.maxY}
+          width={Math.max(0.01, boardBounds.width)}
+          height={Math.max(0.01, boardBounds.height)}
           pointerEvents="none"
         />
+        <g className="editor-guides" pointerEvents="none">
+          <line
+            x1={boardBounds.minX}
+            y1={-boardBounds.maxY - guideOffset}
+            x2={boardBounds.maxX}
+            y2={-boardBounds.maxY - guideOffset}
+          />
+          {xTicks.map((value) => (
+            <g key={`x-${value}`}>
+              <line
+                x1={value}
+                y1={-boardBounds.maxY - guideOffset - guideTickSize / 2}
+                x2={value}
+                y2={-boardBounds.maxY - guideOffset + guideTickSize / 2}
+              />
+              <text
+                x={value}
+                y={-boardBounds.maxY - guideOffset - guideTickSize * 0.85}
+                fontSize={handleSize * 0.82}
+                textAnchor="middle"
+              >
+                {formatGuideValue(value, xTickStep)}
+              </text>
+            </g>
+          ))}
+          <text
+            className="editor-dimension-label"
+            x={(boardBounds.minX + boardBounds.maxX) / 2}
+            y={-boardBounds.maxY - guideOffset - guideTickSize * 2.25}
+            fontSize={handleSize * 0.9}
+            textAnchor="middle"
+          >
+            W {boardBounds.width.toFixed(1)} mm
+          </text>
+
+          <line
+            x1={boardBounds.minX - guideOffset}
+            y1={-boardBounds.maxY}
+            x2={boardBounds.minX - guideOffset}
+            y2={-boardBounds.minY}
+          />
+          {yTicks.map((value) => (
+            <g key={`y-${value}`}>
+              <line
+                x1={boardBounds.minX - guideOffset - guideTickSize / 2}
+                y1={-value}
+                x2={boardBounds.minX - guideOffset + guideTickSize / 2}
+                y2={-value}
+              />
+              <text
+                x={boardBounds.minX - guideOffset - guideTickSize * 0.85}
+                y={-value + handleSize * 0.28}
+                fontSize={handleSize * 0.82}
+                textAnchor="end"
+              >
+                {formatGuideValue(value, yTickStep)}
+              </text>
+            </g>
+          ))}
+          <text
+            className="editor-dimension-label"
+            x={boardBounds.minX - guideOffset - guideTickSize * 3.2}
+            y={-(boardBounds.minY + boardBounds.maxY) / 2}
+            fontSize={handleSize * 0.9}
+            textAnchor="middle"
+            transform={`rotate(-90 ${boardBounds.minX - guideOffset - guideTickSize * 3.2} ${-(boardBounds.minY + boardBounds.maxY) / 2})`}
+          >
+            H {boardBounds.height.toFixed(1)} mm
+          </text>
+        </g>
         <g className="editor-origin" pointerEvents="none">
           <line x1={-handleSize * 1.5} y1="0" x2={handleSize * 3} y2="0" />
           <line x1="0" y1={-handleSize * 1.5} x2="0" y2={handleSize * 3} />

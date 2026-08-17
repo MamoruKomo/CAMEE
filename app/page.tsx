@@ -5,6 +5,7 @@ import {
   Check,
   CircleDot,
   CircleAlert,
+  Crosshair,
   Download,
   Drill,
   Expand,
@@ -41,10 +42,12 @@ import {
   estimateMinutes,
   generateGcode,
   getBounds,
+  getMaterialBounds,
   parseDxfText,
-  pathsForOrigin,
+  pathsForMaterial,
   type CamSettings,
   type CornerReliefType,
+  type MaterialOrigin,
   type ParsedDrawing,
   type ToolPath,
 } from "@/lib/cam";
@@ -52,6 +55,31 @@ import {
 type SectionName = "file" | "cut" | "bit" | "material" | "settings";
 type CornerEditMode = "select" | CornerReliefType;
 type NumericCamSetting = Exclude<keyof CamSettings, "rampEnabled">;
+
+const materialOrigins: Array<{ id: Exclude<MaterialOrigin, "dxf">; label: string }> = [
+  { id: "upper-left", label: "左上" },
+  { id: "upper-center", label: "上中央" },
+  { id: "upper-right", label: "右上" },
+  { id: "center-left", label: "左中央" },
+  { id: "center", label: "中央" },
+  { id: "center-right", label: "右中央" },
+  { id: "lower-left", label: "左下" },
+  { id: "lower-center", label: "下中央" },
+  { id: "lower-right", label: "右下" },
+];
+
+const originLabels: Record<MaterialOrigin, string> = {
+  "upper-left": "材料の左上",
+  "upper-center": "材料の上中央",
+  "upper-right": "材料の右上",
+  "center-left": "材料の左中央",
+  center: "材料の中央",
+  "center-right": "材料の右中央",
+  "lower-left": "材料の左下",
+  "lower-center": "材料の下中央",
+  "lower-right": "材料の右下",
+  dxf: "DXF原点",
+};
 
 const toolButtons = [
   { id: "file" as const, label: "DXFファイル", icon: FolderOpen },
@@ -137,7 +165,9 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState<SectionName>("file");
   const [drawing, setDrawing] = useState<ParsedDrawing | null>(null);
   const [fileName, setFileName] = useState("");
-  const [origin, setOrigin] = useState<"lower-left" | "dxf">("lower-left");
+  const [origin, setOrigin] = useState<MaterialOrigin>("lower-left");
+  const [materialWidth, setMaterialWidth] = useState(300);
+  const [materialHeight, setMaterialHeight] = useState(200);
   const [materialThickness, setMaterialThickness] = useState(18);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState("");
@@ -172,11 +202,20 @@ export default function Home() {
   });
 
   const baseDisplayPaths = useMemo(
-    () => pathsForOrigin(drawing?.paths ?? [], origin),
-    [drawing, origin],
+    () => pathsForMaterial(drawing?.paths ?? [], origin, materialWidth, materialHeight),
+    [drawing, origin, materialWidth, materialHeight],
   );
-  const boardBounds = useMemo(() => getBounds(baseDisplayPaths), [baseDisplayPaths]);
+  const boardBounds = useMemo(
+    () => getMaterialBounds(materialWidth, materialHeight, origin),
+    [materialWidth, materialHeight, origin],
+  );
   const displayBounds = useMemo(() => getBounds(displayPaths), [displayPaths]);
+  const pathsOutsideMaterial = displayPaths.length > 0 && (
+    displayBounds.minX < boardBounds.minX - 0.001
+    || displayBounds.minY < boardBounds.minY - 0.001
+    || displayBounds.maxX > boardBounds.maxX + 0.001
+    || displayBounds.maxY > boardBounds.maxY + 0.001
+  );
 
   useEffect(() => {
     // A file or origin change starts a fresh editing document.
@@ -211,6 +250,11 @@ export default function Home() {
     setGcode(null);
   };
 
+  const changeOrigin = (value: MaterialOrigin) => {
+    setOrigin(value);
+    setGcode(null);
+  };
+
   const loadFile = async (file?: File) => {
     if (!file) return;
     setError("");
@@ -227,6 +271,8 @@ export default function Home() {
       const parsed = parseDxfText(await file.text());
       setDrawing(parsed);
       setFileName(file.name);
+      setMaterialWidth((current) => Math.max(current, Math.ceil(parsed.bounds.width)));
+      setMaterialHeight((current) => Math.max(current, Math.ceil(parsed.bounds.height)));
       setActiveSection("cut");
     } catch (caught) {
       setDrawing(null);
@@ -290,6 +336,11 @@ export default function Home() {
     if (!drawing) {
       setError("先にDXFファイルを読み込んでください。");
       goToSection("file");
+      return;
+    }
+    if (materialWidth <= 0 || materialHeight <= 0 || materialThickness <= 0) {
+      setError("材料のW・H・Dは0より大きい値にしてください。");
+      goToSection("material");
       return;
     }
     try {
@@ -438,11 +489,41 @@ export default function Home() {
         <section className="panel-section" ref={(node) => { sectionRefs.current.material = node; }}>
           <div className="section-heading">
             <span className="step-number">4</span>
-            <div><h2>材料</h2><p>Z0は材料の上面</p></div>
+            <div><h2>材料</h2><p>サイズとXY原点</p></div>
           </div>
-          <div className="field-grid">
-            <NumberField label="材料厚" value={materialThickness} unit="mm" onChange={(value) => setMaterialThickness(value)} />
+          <div className="field-grid is-three">
+            <NumberField label="W 幅" value={materialWidth} unit="mm" onChange={(value) => { setMaterialWidth(value); setGcode(null); }} />
+            <NumberField label="H 高さ" value={materialHeight} unit="mm" onChange={(value) => { setMaterialHeight(value); setGcode(null); }} />
+            <NumberField label="D 厚さ" value={materialThickness} unit="mm" onChange={(value) => { setMaterialThickness(value); setGcode(null); }} />
           </div>
+          <div className="origin-setting">
+            <span className="origin-label"><Crosshair size={14} />XY原点</span>
+            <div className="origin-grid" role="group" aria-label="材料上のXY原点">
+              {materialOrigins.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={origin === option.id ? "is-active" : ""}
+                  aria-label={option.label}
+                  title={option.label}
+                  onClick={() => changeOrigin(option.id)}
+                >
+                  <span />
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className={`dxf-origin-button${origin === "dxf" ? " is-active" : ""}`}
+              onClick={() => changeOrigin("dxf")}
+            >
+              <Crosshair size={14} />
+              <span>DXF原点</span>
+            </button>
+          </div>
+          {pathsOutsideMaterial && <p className="field-note material-warning"><CircleAlert size={13} /> 材料の外側にパスがあります</p>}
+          {settings.finalDepth > materialThickness && <p className="field-note material-warning"><CircleAlert size={13} /> 加工深さが材料Dを超えています</p>}
+          <p className="field-note"><Info size={13} /> Z0は材料の上面</p>
         </section>
 
         <section className="panel-section" ref={(node) => { sectionRefs.current.settings = node; }}>
@@ -450,13 +531,7 @@ export default function Home() {
             <span className="step-number">5</span>
             <div><h2>出力設定</h2><p>GORDIX6 ポスト</p></div>
           </div>
-          <label className="select-field">
-            <span>原点</span>
-            <select value={origin} onChange={(event) => { setOrigin(event.target.value as "lower-left" | "dxf"); setGcode(null); }}>
-              <option value="lower-left">図形の左下</option>
-              <option value="dxf">DXFの原点</option>
-            </select>
-          </label>
+          <div className="origin-summary"><Crosshair size={15} /><span>XY原点</span><strong>{originLabels[origin]}</strong></div>
           <p className="field-note"><Ruler size={13} /> mm・絶対座標・退避高さ2mm・主軸は手動</p>
         </section>
 
@@ -519,6 +594,7 @@ export default function Home() {
             paths={displayPaths}
             depths={depths}
             bitDiameter={settings.bitDiameter}
+            materialBounds={boardBounds}
             materialThickness={materialThickness}
             mode="3d"
             rampEnabled={settings.rampEnabled}
@@ -535,7 +611,7 @@ export default function Home() {
 
         <footer className="statusbar">
           <span><i className="status-dot" /> GORDIX6</span>
-          <span>原点: {origin === "lower-left" ? "左下" : "DXF"}</span>
+          <span>原点: {originLabels[origin]}</span>
           <span>単位: mm</span>
           {!!selectedPathIds.length && <span>{cornerMode === "select" ? `${selectedPathIds.length} パス選択` : cornerMode === "dogbone" ? "ドッグボーン" : "H型フィレット"}</span>}
           <span className="status-spacer" />

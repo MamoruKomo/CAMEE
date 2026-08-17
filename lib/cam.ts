@@ -5,6 +5,17 @@ import { NURBSCurve } from "three/examples/jsm/curves/NURBSCurve.js";
 export type Point2D = { x: number; y: number };
 
 export type CornerReliefType = "dogbone" | "tbone";
+export type MaterialOrigin =
+  | "lower-left"
+  | "lower-center"
+  | "lower-right"
+  | "center-left"
+  | "center"
+  | "center-right"
+  | "upper-left"
+  | "upper-center"
+  | "upper-right"
+  | "dxf";
 
 export type ToolPath = {
   id: string;
@@ -365,6 +376,49 @@ export function pathsForOrigin(paths: ToolPath[], origin: "lower-left" | "dxf") 
   return paths.map((path) => ({
     ...path,
     points: path.points.map((value) => ({ x: value.x - bounds.minX, y: value.y - bounds.minY })),
+  }));
+}
+
+const materialOriginFactors: Record<Exclude<MaterialOrigin, "dxf">, Point2D> = {
+  "lower-left": { x: 0, y: 0 },
+  "lower-center": { x: 0.5, y: 0 },
+  "lower-right": { x: 1, y: 0 },
+  "center-left": { x: 0, y: 0.5 },
+  center: { x: 0.5, y: 0.5 },
+  "center-right": { x: 1, y: 0.5 },
+  "upper-left": { x: 0, y: 1 },
+  "upper-center": { x: 0.5, y: 1 },
+  "upper-right": { x: 1, y: 1 },
+};
+
+export function getMaterialBounds(width: number, height: number, origin: MaterialOrigin): Bounds {
+  const safeWidth = Math.max(0.01, Number.isFinite(width) ? width : 0.01);
+  const safeHeight = Math.max(0.01, Number.isFinite(height) ? height : 0.01);
+  const factor = origin === "dxf" ? materialOriginFactors["lower-left"] : materialOriginFactors[origin];
+  const minX = -safeWidth * factor.x;
+  const minY = -safeHeight * factor.y;
+  return {
+    minX,
+    minY,
+    maxX: minX + safeWidth,
+    maxY: minY + safeHeight,
+    width: safeWidth,
+    height: safeHeight,
+  };
+}
+
+export function pathsForMaterial(
+  paths: ToolPath[],
+  origin: MaterialOrigin,
+  materialWidth: number,
+  materialHeight: number,
+) {
+  if (origin === "dxf") return pathsForOrigin(paths, "dxf");
+  const aligned = pathsForOrigin(paths, "lower-left");
+  const bounds = getMaterialBounds(materialWidth, materialHeight, origin);
+  return aligned.map((path) => ({
+    ...path,
+    points: path.points.map((value) => ({ x: value.x + bounds.minX, y: value.y + bounds.minY })),
   }));
 }
 

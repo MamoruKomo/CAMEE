@@ -3,7 +3,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { buildRampToolpath, type RampPoint, type ToolPath } from "@/lib/cam";
+import { buildRampToolpath, type Bounds, type RampPoint, type ToolPath } from "@/lib/cam";
 
 export type PreviewHandle = {
   zoomIn: () => void;
@@ -17,6 +17,7 @@ type PreviewProps = {
   paths: ToolPath[];
   depths: number[];
   bitDiameter: number;
+  materialBounds: Bounds;
   materialThickness: number;
   mode: "2d" | "3d";
   rampEnabled?: boolean;
@@ -39,7 +40,7 @@ function disposeObject(object: THREE.Object3D) {
 }
 
 export const ToolpathPreview = forwardRef<PreviewHandle, PreviewProps>(function ToolpathPreview(
-  { paths, depths, bitDiameter, materialThickness, mode, rampEnabled = false, rampLength = 0 },
+  { paths, depths, bitDiameter, materialBounds, materialThickness, mode, rampEnabled = false, rampLength = 0 },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -78,31 +79,26 @@ export const ToolpathPreview = forwardRef<PreviewHandle, PreviewProps>(function 
     container.replaceChildren(renderer.domElement);
 
     const scene = new THREE.Scene();
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
+    let minX = materialBounds.minX;
+    let minY = materialBounds.minY;
+    let maxX = materialBounds.maxX;
+    let maxY = materialBounds.maxY;
     paths.forEach((path) => path.points.forEach((point) => {
       minX = Math.min(minX, point.x);
       minY = Math.min(minY, point.y);
       maxX = Math.max(maxX, point.x);
       maxY = Math.max(maxY, point.y);
     }));
-    if (!Number.isFinite(minX)) {
-      minX = 0;
-      minY = 0;
-      maxX = 300;
-      maxY = 200;
-    }
     const drawingWidth = Math.max(10, maxX - minX);
     const drawingHeight = Math.max(10, maxY - minY);
     const maxDimension = Math.max(drawingWidth, drawingHeight);
-    const margin = Math.max(10, maxDimension * 0.06);
-    const boardWidth = drawingWidth + margin * 2;
-    const boardHeight = drawingHeight + margin * 2;
-    const thickness = Math.max(materialThickness, (depths.at(-1) ?? 0) + 2);
+    const boardWidth = Math.max(0.01, materialBounds.width);
+    const boardHeight = Math.max(0.01, materialBounds.height);
+    const thickness = Math.max(0.01, materialThickness);
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
+    const boardCenterX = (materialBounds.minX + materialBounds.maxX) / 2;
+    const boardCenterY = (materialBounds.minY + materialBounds.maxY) / 2;
 
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, maxDimension * 20 + 1000);
     camera.up.set(0, 0, 1);
@@ -143,7 +139,7 @@ export const ToolpathPreview = forwardRef<PreviewHandle, PreviewProps>(function 
         opacity: mode === "3d" ? 0.9 : 1,
       }),
     );
-    board.position.z = -thickness / 2;
+    board.position.set(boardCenterX - centerX, boardCenterY - centerY, -thickness / 2);
     scene.add(board);
     const boardEdges = new THREE.LineSegments(
       new THREE.EdgesGeometry(board.geometry),
@@ -189,7 +185,7 @@ export const ToolpathPreview = forwardRef<PreviewHandle, PreviewProps>(function 
     }
 
     const axes = new THREE.AxesHelper(Math.max(12, maxDimension * 0.08));
-    axes.position.set(-boardWidth / 2 + margin * 0.45, -boardHeight / 2 + margin * 0.45, 0.4);
+    axes.position.set(-centerX, -centerY, 0.4);
     scene.add(axes);
 
     const resize = () => {
@@ -231,7 +227,7 @@ export const ToolpathPreview = forwardRef<PreviewHandle, PreviewProps>(function 
       renderer.domElement.remove();
       viewRef.current = null;
     };
-  }, [paths, depths, bitDiameter, materialThickness, mode, rampEnabled, rampLength]);
+  }, [paths, depths, bitDiameter, materialBounds, materialThickness, mode, rampEnabled, rampLength]);
 
   return <div ref={containerRef} className="three-preview" aria-label={`${mode.toUpperCase()}ツールパスプレビュー`} />;
 });
