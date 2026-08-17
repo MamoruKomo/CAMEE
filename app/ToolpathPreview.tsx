@@ -11,6 +11,7 @@ export type PreviewHandle = {
   fit: () => void;
   scaleSelection?: (factor: number) => void;
   rotateSelection?: (degrees: number) => void;
+  selectPaths?: (pathIds: string[]) => void;
 };
 
 type PreviewProps = {

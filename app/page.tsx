@@ -9,6 +9,8 @@ import {
   Download,
   Drill,
   Expand,
+  FileDown,
+  Files,
   FileType2,
   FolderOpen,
   Grid3X3,
@@ -17,6 +19,7 @@ import {
   Link2,
   Maximize2,
   MousePointer2,
+  Pencil,
   Play,
   RotateCcw,
   RotateCw,
@@ -55,6 +58,18 @@ import {
 type SectionName = "file" | "cut" | "bit" | "material" | "settings";
 type CornerEditMode = "select" | CornerReliefType;
 type NumericCamSetting = Exclude<keyof CamSettings, "rampEnabled">;
+type ExportMode = "combined" | "separate";
+
+type CalculatedToolpath = {
+  id: string;
+  name: string;
+  pathIds: string[];
+  paths: ToolPath[];
+  settings: CamSettings;
+  gcode: string;
+  estimatedMinutes: number;
+  passCount: number;
+};
 
 const materialOrigins: Array<{ id: Exclude<MaterialOrigin, "dxf">; label: string }> = [
   { id: "upper-left", label: "左上" },
@@ -160,6 +175,28 @@ function formatDuration(minutes: number) {
     : `${mins}:${String(seconds).padStart(2, "0")}`;
 }
 
+function clonePaths(paths: ToolPath[]) {
+  return paths.map((path) => ({
+    ...path,
+    points: path.points.map((point) => ({ ...point })),
+  }));
+}
+
+function safeFileName(value: string) {
+  const printable = Array.from(value.trim(), (character) => character.charCodeAt(0) < 32 ? "_" : character).join("");
+  return printable.replace(/[<>:"/\\|?*]/g, "_") || "toolpath";
+}
+
+function downloadText(content: string, fileName: string) {
+  const blob = new Blob([content], { type: "text/plain;charset=us-ascii" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function Home() {
   const [view, setView] = useState<"2d" | "3d">("2d");
   const [activeSection, setActiveSection] = useState<SectionName>("file");
@@ -171,9 +208,12 @@ export default function Home() {
   const [materialThickness, setMaterialThickness] = useState(18);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState("");
-  const [gcode, setGcode] = useState<string | null>(null);
   const [displayPaths, setDisplayPaths] = useState<ToolPath[]>([]);
   const [selectedPathIds, setSelectedPathIds] = useState<string[]>([]);
+  const [calculatedToolpaths, setCalculatedToolpaths] = useState<CalculatedToolpath[]>([]);
+  const [toolpathName, setToolpathName] = useState("ツールパス 1");
+  const [editingToolpathId, setEditingToolpathId] = useState<string | null>(null);
+  const [exportMode, setExportMode] = useState<ExportMode>("combined");
   const [cornerMode, setCornerMode] = useState<CornerEditMode>("select");
   const [closeTolerance, setCloseTolerance] = useState(0.1);
   const [pathNotice, setPathNotice] = useState("");
@@ -220,16 +260,20 @@ export default function Home() {
   useEffect(() => {
     // A file or origin change starts a fresh editing document.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDisplayPaths(baseDisplayPaths.map((path) => ({
-      ...path,
-      points: path.points.map((point) => ({ ...point })),
-    })));
+    setDisplayPaths(clonePaths(baseDisplayPaths));
     setSelectedPathIds([]);
+    setCalculatedToolpaths([]);
+    setEditingToolpathId(null);
+    setToolpathName("ツールパス 1");
     setCornerMode("select");
     setPathNotice("");
     setShowClosePanel(false);
     setEditorRevision((current) => current + 1);
   }, [baseDisplayPaths]);
+  const selectedPaths = useMemo(
+    () => displayPaths.filter((path) => selectedPathIds.includes(path.id)),
+    [displayPaths, selectedPathIds],
+  );
   const depths = useMemo(() => {
     try {
       return buildPassDepths(settings.finalDepth, settings.stepDown);
@@ -239,26 +283,31 @@ export default function Home() {
   }, [settings.finalDepth, settings.stepDown]);
   const estimatedMinutes = useMemo(() => {
     try {
-      return estimateMinutes(displayPaths, settings);
+      return estimateMinutes(selectedPaths, settings);
     } catch {
       return 0;
     }
-  }, [displayPaths, settings]);
+  }, [selectedPaths, settings]);
+
+  useEffect(() => {
+    if (!editingToolpathId || view !== "2d") return;
+    const job = calculatedToolpaths.find((toolpath) => toolpath.id === editingToolpathId);
+    if (!job) return;
+    const frame = requestAnimationFrame(() => previewRef.current?.selectPaths?.(job.pathIds));
+    return () => cancelAnimationFrame(frame);
+  }, [calculatedToolpaths, editingToolpathId, view]);
 
   const updateSetting = (key: NumericCamSetting, value: number) => {
     setSettings((current) => ({ ...current, [key]: value }));
-    setGcode(null);
   };
 
   const changeOrigin = (value: MaterialOrigin) => {
     setOrigin(value);
-    setGcode(null);
   };
 
   const loadFile = async (file?: File) => {
     if (!file) return;
     setError("");
-    setGcode(null);
     if (!file.name.toLowerCase().endsWith(".dxf")) {
       setError("DXFファイル（.dxf）を選択してください。");
       return;
@@ -284,22 +333,17 @@ export default function Home() {
   const clearFile = () => {
     setDrawing(null);
     setFileName("");
-    setGcode(null);
     setError("");
     if (inputRef.current) inputRef.current.value = "";
   };
 
   const resetPathEdits = () => {
-    setDisplayPaths(baseDisplayPaths.map((path) => ({
-      ...path,
-      points: path.points.map((point) => ({ ...point })),
-    })));
+    setDisplayPaths(clonePaths(baseDisplayPaths));
     setSelectedPathIds([]);
     setCornerMode("select");
     setPathNotice("");
     setShowClosePanel(false);
     setEditorRevision((current) => current + 1);
-    setGcode(null);
   };
 
   const connectAndClosePaths = () => {
@@ -314,7 +358,6 @@ export default function Home() {
       setSelectedPathIds([]);
       setCornerMode("select");
       setEditorRevision((current) => current + 1);
-      setGcode(null);
       setPathNotice(`接続 ${result.joinedCount}・閉合 ${result.closedCount}`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "パスを閉じられませんでした。");
@@ -343,23 +386,77 @@ export default function Home() {
       goToSection("material");
       return;
     }
+    if (!selectedPaths.length) {
+      setError("加工するパスを2D画面で選択してください。");
+      setView("2d");
+      return;
+    }
+    const name = toolpathName.trim();
+    if (!name) {
+      setError("ツールパス名を入力してください。");
+      return;
+    }
+    if (calculatedToolpaths.some((toolpath) => toolpath.name === name && toolpath.id !== editingToolpathId)) {
+      setError("同じツールパス名があります。別の名前を入力してください。");
+      return;
+    }
     try {
-      const output = generateGcode(displayPaths, settings, fileName);
-      setGcode(output);
+      const paths = clonePaths(selectedPaths);
+      const output = generateGcode(paths, settings, `${fileName} / ${name}`);
+      const toolpath: CalculatedToolpath = {
+        id: editingToolpathId ?? crypto.randomUUID(),
+        name,
+        pathIds: paths.map((path) => path.id),
+        paths,
+        settings: { ...settings },
+        gcode: output,
+        estimatedMinutes: estimateMinutes(paths, settings),
+        passCount: buildPassDepths(settings.finalDepth, settings.stepDown).length,
+      };
+      setCalculatedToolpaths((current) => editingToolpathId
+        ? current.map((item) => item.id === editingToolpathId ? toolpath : item)
+        : [...current, toolpath]);
+      setEditingToolpathId(null);
+      setToolpathName(`ツールパス ${calculatedToolpaths.length + (editingToolpathId ? 1 : 2)}`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "ツールパスを作成できませんでした。");
     }
   };
 
+  const editToolpath = (toolpath: CalculatedToolpath) => {
+    setEditingToolpathId(toolpath.id);
+    setToolpathName(toolpath.name);
+    setSettings({ ...toolpath.settings });
+    setSelectedPathIds([...toolpath.pathIds]);
+    setCornerMode("select");
+    setView("2d");
+    setError("");
+  };
+
+  const cancelToolpathEdit = () => {
+    setEditingToolpathId(null);
+    setToolpathName(`ツールパス ${calculatedToolpaths.length + 1}`);
+  };
+
+  const deleteToolpath = (id: string) => {
+    setCalculatedToolpaths((current) => current.filter((toolpath) => toolpath.id !== id));
+    if (editingToolpathId === id) cancelToolpathEdit();
+  };
+
   const downloadGcode = () => {
-    if (!gcode) return;
-    const blob = new Blob([gcode], { type: "text/plain;charset=us-ascii" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${fileName.replace(/\.dxf$/i, "") || "gordix-toolpath"}.gcode`;
-    link.click();
-    URL.revokeObjectURL(url);
+    if (!calculatedToolpaths.length) return;
+    const baseName = safeFileName(fileName.replace(/\.dxf$/i, "") || "camee");
+    if (exportMode === "combined") {
+      const output = calculatedToolpaths.map((toolpath, index) => [
+        `; ===== TOOLPATH ${index + 1}: ${toolpath.name.replace(/[^\x20-\x7e]/g, "_")} =====`,
+        toolpath.gcode.trim(),
+      ].join("\n")).join("\n\n");
+      downloadText(`${output}\n`, `${baseName}-all.gcode`);
+      return;
+    }
+    calculatedToolpaths.forEach((toolpath, index) => {
+      downloadText(toolpath.gcode, `${baseName}-${index + 1}-${safeFileName(toolpath.name)}.gcode`);
+    });
   };
 
   return (
@@ -376,7 +473,7 @@ export default function Home() {
           </IconButton>
           {fileName && <span className="top-file-name">{fileName}</span>}
         </div>
-        <button className="export-button" type="button" disabled={!gcode} onClick={downloadGcode}>
+        <button className="export-button" type="button" disabled={!calculatedToolpaths.length} onClick={downloadGcode}>
           <Download size={17} />
           <span>G-code</span>
         </button>
@@ -462,7 +559,6 @@ export default function Home() {
               checked={settings.rampEnabled}
               onChange={(event) => {
                 setSettings((current) => ({ ...current, rampEnabled: event.target.checked }));
-                setGcode(null);
               }}
             />
             <span className="toggle-control" aria-hidden="true" />
@@ -492,9 +588,9 @@ export default function Home() {
             <div><h2>材料</h2><p>サイズとXY原点</p></div>
           </div>
           <div className="field-grid is-three">
-            <NumberField label="W 幅" value={materialWidth} unit="mm" onChange={(value) => { setMaterialWidth(value); setGcode(null); }} />
-            <NumberField label="H 高さ" value={materialHeight} unit="mm" onChange={(value) => { setMaterialHeight(value); setGcode(null); }} />
-            <NumberField label="D 厚さ" value={materialThickness} unit="mm" onChange={(value) => { setMaterialThickness(value); setGcode(null); }} />
+            <NumberField label="W 幅" value={materialWidth} unit="mm" onChange={setMaterialWidth} />
+            <NumberField label="H 高さ" value={materialHeight} unit="mm" onChange={setMaterialHeight} />
+            <NumberField label="D 厚さ" value={materialThickness} unit="mm" onChange={setMaterialThickness} />
           </div>
           <div className="origin-setting">
             <span className="origin-label"><Crosshair size={14} />XY原点</span>
@@ -535,10 +631,20 @@ export default function Home() {
           <p className="field-note"><Ruler size={13} /> mm・絶対座標・退避高さ2mm・主軸は手動</p>
         </section>
 
-        <button className={`calculate-button${gcode ? " is-ready" : ""}`} type="button" onClick={calculate}>
-          {gcode ? <Check size={18} /> : <Play size={18} fill="currentColor" />}
-          <span>{gcode ? "G-code作成済み" : "ツールパスを計算"}</span>
-        </button>
+        <div className="calculate-area">
+          <label className="toolpath-name-field">
+            <span>ツールパス名</span>
+            <input value={toolpathName} maxLength={60} onChange={(event) => setToolpathName(event.target.value)} />
+          </label>
+          <div className="calculate-selection"><MousePointer2 size={14} /><span>{selectedPathIds.length} パスを対象</span></div>
+          <button className={`calculate-button${editingToolpathId ? " is-editing" : ""}`} type="button" onClick={calculate}>
+            {editingToolpathId ? <Check size={18} /> : <Play size={18} fill="currentColor" />}
+            <span>{editingToolpathId ? "ツールパスを更新" : "ツールパスを計算"}</span>
+          </button>
+          {editingToolpathId && (
+            <button className="cancel-edit-button" type="button" onClick={cancelToolpathEdit}>編集をキャンセル</button>
+          )}
+        </div>
       </aside>
 
       <section className="workspace" aria-label="プレビュー">
@@ -585,7 +691,6 @@ export default function Home() {
             onPathsChange={(paths) => {
               setDisplayPaths(paths);
               setPathNotice("");
-              setGcode(null);
             }}
           />
         ) : (
@@ -601,8 +706,6 @@ export default function Home() {
             rampLength={settings.rampLength}
           />
         )}
-        {!drawing && <div className="empty-hint"><FolderOpen size={25} /><span>DXFを読み込んでください</span></div>}
-
         <div className="zoom-tools" aria-label="プレビュー操作">
           <IconButton label="拡大" onClick={() => previewRef.current?.zoomIn()}><ZoomIn size={18} /></IconButton>
           <IconButton label="縮小" onClick={() => previewRef.current?.zoomOut()}><ZoomOut size={18} /></IconButton>
@@ -619,6 +722,70 @@ export default function Home() {
           <span>加工時間 {formatDuration(estimatedMinutes)}</span>
         </footer>
       </section>
+
+      <aside className="toolpath-panel" aria-label="計算済みツールパス">
+        <div className="toolpath-panel-heading">
+          <div><Layers3 size={17} /><h2>ツールパス</h2></div>
+          <span>{calculatedToolpaths.length}</span>
+        </div>
+
+        <div className="export-mode" role="group" aria-label="G-code書き出し方式">
+          <button
+            type="button"
+            className={exportMode === "combined" ? "is-active" : ""}
+            onClick={() => setExportMode("combined")}
+          >
+            <Files size={16} />
+            <span>一括</span>
+          </button>
+          <button
+            type="button"
+            className={exportMode === "separate" ? "is-active" : ""}
+            onClick={() => setExportMode("separate")}
+          >
+            <FileDown size={16} />
+            <span>個別</span>
+          </button>
+        </div>
+
+        <div className="toolpath-list">
+          {calculatedToolpaths.map((toolpath, index) => (
+            <article
+              key={toolpath.id}
+              className={`toolpath-card${editingToolpathId === toolpath.id ? " is-editing" : ""}`}
+            >
+              <div className="toolpath-order">{index + 1}</div>
+              <div className="toolpath-card-body">
+                <strong>{toolpath.name}</strong>
+                <span>{toolpath.pathIds.length} パス · {toolpath.passCount} 回 · Z-{toolpath.settings.finalDepth} mm</span>
+                <span>ビット Ø{toolpath.settings.bitDiameter} · {formatDuration(toolpath.estimatedMinutes)}</span>
+              </div>
+              <div className="toolpath-card-actions">
+                <IconButton label={`${toolpath.name}を編集`} active={editingToolpathId === toolpath.id} onClick={() => editToolpath(toolpath)}>
+                  <Pencil size={15} />
+                </IconButton>
+                <IconButton label={`${toolpath.name}を削除`} onClick={() => deleteToolpath(toolpath.id)}>
+                  <Trash2 size={15} />
+                </IconButton>
+              </div>
+            </article>
+          ))}
+          {!calculatedToolpaths.length && (
+            <div className="toolpath-empty"><Layers3 size={22} /><span>計算済みツールパスなし</span></div>
+          )}
+        </div>
+
+        <div className="toolpath-export-area">
+          <div className="toolpath-total">
+            <span>合計時間</span>
+            <strong>{formatDuration(calculatedToolpaths.reduce((total, item) => total + item.estimatedMinutes, 0))}</strong>
+          </div>
+          <button type="button" className="toolpath-export-button" disabled={!calculatedToolpaths.length} onClick={downloadGcode}>
+            <Download size={17} />
+            <span>{exportMode === "combined" ? "1ファイルで書き出す" : "個別に書き出す"}</span>
+          </button>
+        </div>
+      </aside>
     </main>
   );
 }

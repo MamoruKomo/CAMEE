@@ -236,6 +236,7 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
     fit,
     scaleSelection,
     rotateSelection,
+    selectPaths,
   }));
 
   const screenToDrawing = (clientX: number, clientY: number): Point2D => {
