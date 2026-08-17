@@ -438,6 +438,15 @@ export const ToolpathEditor2D = forwardRef<PreviewHandle, EditorProps>(function 
       dragRef.current = null;
       return;
     }
+    if (selectedPathIds.length && (event.key === "Backspace" || event.key === "Delete")) {
+      event.preventDefault();
+      const selected = new Set(selectedPathIds);
+      const next = localPathsRef.current.filter((path) => !selected.has(path.id));
+      updateLocalPaths(next);
+      onPathsChange(clonePaths(next));
+      selectPaths([]);
+      return;
+    }
     if (!selectedPathIds.length || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
     event.preventDefault();
     const amount = event.shiftKey ? 10 : 1;
