@@ -25,6 +25,7 @@ import {
   RotateCw,
   Rotate3d,
   Ruler,
+  Save,
   Scissors,
   Settings2,
   Shrink,
@@ -70,6 +71,29 @@ type CalculatedToolpath = {
   estimatedMinutes: number;
   passCount: number;
 };
+
+type SavedProject = {
+  version: 1;
+  savedAt: number;
+  fileName: string;
+  drawing: ParsedDrawing | null;
+  displayPaths: ToolPath[];
+  calculatedToolpaths: CalculatedToolpath[];
+  settings: CamSettings;
+  origin: MaterialOrigin;
+  materialWidth: number;
+  materialHeight: number;
+  materialThickness: number;
+  exportMode: ExportMode;
+  toolpathName: string;
+  view: "2d" | "3d";
+};
+
+type SaveStatus = "loading" | "saving" | "saved" | "error";
+
+const PROJECT_DB_NAME = "camee-projects";
+const PROJECT_STORE_NAME = "projects";
+const CURRENT_PROJECT_KEY = "current-project";
 
 const materialOrigins: Array<{ id: Exclude<MaterialOrigin, "dxf">; label: string }> = [
   { id: "upper-left", label: "左上" },
@@ -197,6 +221,48 @@ function downloadText(content: string, fileName: string) {
   URL.revokeObjectURL(url);
 }
 
+function openProjectDatabase() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(PROJECT_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(PROJECT_STORE_NAME)) {
+        request.result.createObjectStore(PROJECT_STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("保存領域を開けませんでした。"));
+  });
+}
+
+async function readSavedProject() {
+  const database = await openProjectDatabase();
+  try {
+    return await new Promise<SavedProject | null>((resolve, reject) => {
+      const transaction = database.transaction(PROJECT_STORE_NAME, "readonly");
+      const request = transaction.objectStore(PROJECT_STORE_NAME).get(CURRENT_PROJECT_KEY);
+      request.onsuccess = () => resolve((request.result as SavedProject | undefined) ?? null);
+      request.onerror = () => reject(request.error ?? new Error("保存データを読み込めませんでした。"));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function writeSavedProject(project: SavedProject) {
+  const database = await openProjectDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(PROJECT_STORE_NAME, "readwrite");
+      transaction.objectStore(PROJECT_STORE_NAME).put(project, CURRENT_PROJECT_KEY);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error("保存できませんでした。"));
+      transaction.onabort = () => reject(transaction.error ?? new Error("保存が中断されました。"));
+    });
+  } finally {
+    database.close();
+  }
+}
+
 export default function Home() {
   const [view, setView] = useState<"2d" | "3d">("2d");
   const [activeSection, setActiveSection] = useState<SectionName>("file");
@@ -214,6 +280,9 @@ export default function Home() {
   const [toolpathName, setToolpathName] = useState("ツールパス 1");
   const [editingToolpathId, setEditingToolpathId] = useState<string | null>(null);
   const [exportMode, setExportMode] = useState<ExportMode>("combined");
+  const [storageReady, setStorageReady] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("loading");
+  const [savedAt, setSavedAt] = useState<number | null>(null);
   const [cornerMode, setCornerMode] = useState<CornerEditMode>("select");
   const [closeTolerance, setCloseTolerance] = useState(0.1);
   const [pathNotice, setPathNotice] = useState("");
@@ -233,6 +302,8 @@ export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const previewRef = useRef<PreviewHandle>(null);
+  const skipNextDocumentResetRef = useRef(false);
+  const saveSequenceRef = useRef(0);
   const sectionRefs = useRef<Record<SectionName, HTMLElement | null>>({
     file: null,
     cut: null,
@@ -240,6 +311,38 @@ export default function Home() {
     material: null,
     settings: null,
   });
+
+  useEffect(() => {
+    let active = true;
+    readSavedProject()
+      .then((saved) => {
+        if (!active || !saved || saved.version !== 1) return;
+        skipNextDocumentResetRef.current = true;
+        setFileName(saved.fileName);
+        setDrawing(saved.drawing);
+        setDisplayPaths(clonePaths(saved.displayPaths));
+        setCalculatedToolpaths(saved.calculatedToolpaths);
+        setSettings(saved.settings);
+        setOrigin(saved.origin);
+        setMaterialWidth(saved.materialWidth);
+        setMaterialHeight(saved.materialHeight);
+        setMaterialThickness(saved.materialThickness);
+        setExportMode(saved.exportMode);
+        setToolpathName(saved.toolpathName);
+        setView(saved.view);
+        setSavedAt(saved.savedAt);
+      })
+      .catch(() => {
+        if (active) setSaveStatus("error");
+      })
+      .finally(() => {
+        if (!active) return;
+        if (!skipNextDocumentResetRef.current) skipNextDocumentResetRef.current = true;
+        setStorageReady(true);
+        setSaveStatus((current) => current === "error" ? current : "saved");
+      });
+    return () => { active = false; };
+  }, []);
 
   const baseDisplayPaths = useMemo(
     () => pathsForMaterial(drawing?.paths ?? [], origin, materialWidth, materialHeight),
@@ -258,8 +361,12 @@ export default function Home() {
   );
 
   useEffect(() => {
+    if (!storageReady) return;
+    if (skipNextDocumentResetRef.current) {
+      skipNextDocumentResetRef.current = false;
+      return;
+    }
     // A file or origin change starts a fresh editing document.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDisplayPaths(clonePaths(baseDisplayPaths));
     setSelectedPathIds([]);
     setCalculatedToolpaths([]);
@@ -269,7 +376,7 @@ export default function Home() {
     setPathNotice("");
     setShowClosePanel(false);
     setEditorRevision((current) => current + 1);
-  }, [baseDisplayPaths]);
+  }, [baseDisplayPaths, storageReady]);
   const selectedPaths = useMemo(
     () => displayPaths.filter((path) => selectedPathIds.includes(path.id)),
     [displayPaths, selectedPathIds],
@@ -288,6 +395,58 @@ export default function Home() {
       return 0;
     }
   }, [selectedPaths, settings]);
+
+  const projectSnapshot = useMemo<SavedProject>(() => ({
+    version: 1,
+    savedAt: 0,
+    fileName,
+    drawing,
+    displayPaths: clonePaths(displayPaths),
+    calculatedToolpaths,
+    settings: { ...settings },
+    origin,
+    materialWidth,
+    materialHeight,
+    materialThickness,
+    exportMode,
+    toolpathName,
+    view,
+  }), [
+    calculatedToolpaths,
+    displayPaths,
+    drawing,
+    exportMode,
+    fileName,
+    materialHeight,
+    materialThickness,
+    materialWidth,
+    origin,
+    settings,
+    toolpathName,
+    view,
+  ]);
+
+  const saveProject = useCallback(async () => {
+    if (!storageReady) return;
+    const sequence = saveSequenceRef.current + 1;
+    saveSequenceRef.current = sequence;
+    const nextSavedAt = Date.now();
+    setSaveStatus("saving");
+    try {
+      await writeSavedProject({ ...projectSnapshot, savedAt: nextSavedAt });
+      if (saveSequenceRef.current !== sequence) return;
+      setSavedAt(nextSavedAt);
+      setSaveStatus("saved");
+    } catch {
+      if (saveSequenceRef.current === sequence) setSaveStatus("error");
+    }
+  }, [projectSnapshot, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    const timer = window.setTimeout(() => { void saveProject(); }, 350);
+    return () => window.clearTimeout(timer);
+  }, [projectSnapshot, saveProject, storageReady]);
 
   useEffect(() => {
     if (!editingToolpathId || view !== "2d") return;
@@ -471,6 +630,12 @@ export default function Home() {
           <IconButton label="DXFを開く" onClick={() => inputRef.current?.click()}>
             <FolderOpen size={19} />
           </IconButton>
+          <IconButton label="プロジェクトを保存" disabled={!storageReady || saveStatus === "saving"} onClick={() => { void saveProject(); }}>
+            {saveStatus === "saved" ? <Check size={18} /> : <Save size={18} />}
+          </IconButton>
+          <span className={`save-status is-${saveStatus}`}>
+            {saveStatus === "loading" ? "読込中" : saveStatus === "saving" ? "保存中" : saveStatus === "error" ? "保存エラー" : savedAt ? "保存済み" : "自動保存"}
+          </span>
           {fileName && <span className="top-file-name">{fileName}</span>}
         </div>
         <button className="export-button" type="button" disabled={!calculatedToolpaths.length} onClick={downloadGcode}>
