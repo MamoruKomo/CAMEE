@@ -47,6 +47,12 @@ resize/rotate/duplicate/split/reorderは各操作1件としてUndoでき、確�
 
 文字はsource objectとして保存し、生成strokeはLine `VectorPath`です。未対応文字、font checksum不一致、stale operationはCAM/G-codeを拒否します。表示線幅はCAM非連動です。
 
+## Phase 2B
+
+完了済みです。Design/CAM Inspector tabs、toolごとのContext Bar、空Canvas開始guide、作図中mm寸法HUD、Escape完了、active tool statusを追加しました。UI stateはDocument historyへ入らず、VectorDocument/CAM境界を変更しません。
+
+参考製品から採用した情報設計と判断理由は [`ux.md`](./ux.md) に記録しています。
+
 ## 対象外
 
 Brush、Gradient、Image Trace、AI drawing、共同編集、account/cloud sync、mobile full support、nesting、profile/pocket/v-carve/3D CAM、advanced boolean/group、material removal simulationは対象外です。

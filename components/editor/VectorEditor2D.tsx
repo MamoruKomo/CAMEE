@@ -10,13 +10,12 @@ import { getVectorBounds, movePath, rotatePath, scalePath, type VectorBounds } f
 import { cloneVectorDocument, commitDocument, createId, createVectorNode, orderedPaths, type Vec2, type VectorDocument, type VectorPath } from "@/lib/vector/types";
 import { duplicateVectorPaths, useClipboard } from "@/hooks/useClipboard";
 import { deleteVectorText, insertVectorText, updateVectorText } from "@/lib/vector/text";
+import { shapeMeasurement, type EditorTool } from "@/lib/editor/tool-context";
 import { useViewport, type EditorViewBox } from "@/hooks/useViewport";
 import type { PreviewHandle } from "@/app/ToolpathPreview";
 import { Grid } from "./Grid";
 import { NodeOverlay, type SelectedNodeRef } from "./NodeOverlay";
 import { SelectionOverlay, type ResizeHandle } from "./SelectionOverlay";
-
-export type EditorTool = "select" | "direct" | "pen" | "line" | "rectangle" | "ellipse" | "text" | "hand" | "zoom";
 
 type EditorProps = {
   document: VectorDocument;
@@ -128,6 +127,7 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
   const [selectionWindow, setSelectionWindow] = useState<{ start: Vec2; current: Vec2 } | null>(null);
   const [shapePreview, setShapePreview] = useState<VectorPath | null>(null);
   const shapePreviewRef = useRef<VectorPath | null>(null);
+  const [dimensionHud, setDimensionHud] = useState<{ point: Vec2; label: string } | null>(null);
   const duplicateCountRef = useRef(0);
   const copiedTextsRef = useRef<(NonNullable<VectorDocument["texts"]>[number])[]>([]);
   const textPasteCountRef = useRef(0);
@@ -437,6 +437,7 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
       const preview = drag.tool === "line" ? createLinePath(start, current) : drag.tool === "rectangle" ? createRectanglePath(start, current) : createEllipsePath(start, current);
       shapePreviewRef.current = preview;
       setShapePreview(preview);
+      setDimensionHud({ point: current, label: shapeMeasurement(drag.tool, start, current).label });
       return;
     }
     if (drag.kind === "move") {
@@ -534,6 +535,7 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
       }
       shapePreviewRef.current = null;
       setShapePreview(null);
+      setDimensionHud(null);
     }
     try { svgRef.current?.releasePointerCapture(event.pointerId); } catch { /* capture may already be released */ }
   };
@@ -605,7 +607,15 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
         return;
       }
       if (tool === "pen" && event.key === "Enter") { event.preventDefault(); finalizeDraft(false); return; }
-      if (tool === "pen" && event.key === "Escape") { event.preventDefault(); finalizeDraft(false); return; }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (tool === "pen") finalizeDraft(false);
+        if (tool === "select") onSelectionChange([]);
+        else onToolChange("select");
+        onNodeSelectionChange([]);
+        setDimensionHud(null);
+        return;
+      }
       if (tool === "pen" && event.key === "Backspace" && draftPathRef.current) {
         event.preventDefault();
         const next = { ...draftPathRef.current, nodes: draftPathRef.current.nodes.slice(0, -1) };
@@ -717,6 +727,10 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
           </g>
         ))}
         {shapePreview && <path d={vectorPathToSvgData(shapePreview)} className="vector-path drawing-preview" vectorEffect="non-scaling-stroke" />}
+        {dimensionHud && <g className="dimension-hud" transform={`translate(${dimensionHud.point.x + pointRadius * 3} ${-dimensionHud.point.y - pointRadius * 7})`} pointerEvents="none">
+          <rect width={pointRadius * 38} height={pointRadius * 5.5} rx={pointRadius} />
+          <text x={pointRadius * 1.5} y={pointRadius * 3.55} fontSize={pointRadius * 2.25}>{dimensionHud.label}</text>
+        </g>}
         {draftPath && draftPath.nodes.length > 0 && (
           <>
             <path d={vectorPathToSvgData(draftPath)} className="vector-path drawing-preview" vectorEffect="non-scaling-stroke" />

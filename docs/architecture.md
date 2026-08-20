@@ -58,6 +58,12 @@ document history、selection、viewport、drawing preview、CAM settingsを分�
 
 Phase 1Bのresize/rotateも同じtransaction方式です。8方向resizeとrotation handleは複数選択boundsを基準にanchor/handleへ確定し、Shiftで比率または15°を固定します。Direct Selectionでsegmentをdouble clickすると最近傍parameterを求め、de Casteljau分割で形状を保持したnodeを追加します。Path reorderは`pathOrder`だけを更新します。
 
+## Workspace UX
+
+Phase 2BはDesignとCAMを右Inspector tabで分離する。tool、Inspector mode、Context Bar、empty guide、dimension HUDは一時UI stateであり、VectorDocumentにもUndo historyにも保存しない。tool guidanceとshape measurementは`lib/editor/tool-context.ts`の純粋data/functionに置き、React componentからgeometry計算を分離する。
+
+Context Barは選択やtoolに応じた次actionを表示するが、CAM計算やGeometry変更を暗黙実行しない。3Dへ移るとCAM Inspectorを開き、Designへ戻れば作図toolとpropertiesを利用できる。詳細な参考資料と判断は`docs/ux.md`へ記録した。
+
 ## Persistence and migration
 
 IndexedDB名とstore/keyは互換性のため `camee-projects/projects/current-project` を継承し、保存payloadだけVersion 2へ更新します。Version 1 `displayPaths`（なければdrawing paths）は各pointをcorner nodeへ変換し、元データは変更しません。JSON import/exportも同じmigration/validation経路を使い、Bezier handleを数値のままroundtripします。CAMのサンプリング済みToolPath cacheはJSON/IndexedDBへ永続化せず、保存Operationのrevisionをstaleにしてreload後の再計算を必須にします。

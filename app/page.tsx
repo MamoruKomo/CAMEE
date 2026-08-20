@@ -3,12 +3,15 @@
 import { Focus, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ToolpathPreview, type PreviewHandle } from "./ToolpathPreview";
-import { VectorEditor2D, type EditorTool } from "@/components/editor/VectorEditor2D";
+import { VectorEditor2D } from "@/components/editor/VectorEditor2D";
+import { CanvasStartGuide } from "@/components/editor/CanvasStartGuide";
+import { ContextBar } from "@/components/editor/ContextBar";
 import type { SelectedNodeRef } from "@/components/editor/NodeOverlay";
 import { CamPanel } from "@/components/panels/CamPanel";
 import { PathListPanel } from "@/components/panels/PathListPanel";
 import { PropertiesPanel } from "@/components/panels/PropertiesPanel";
 import { TextPanel } from "@/components/panels/TextPanel";
+import { InspectorTabs, type InspectorMode } from "@/components/panels/InspectorTabs";
 import { ToolBar } from "@/components/toolbar/ToolBar";
 import { TopBar } from "@/components/toolbar/TopBar";
 import { useEditorHistory } from "@/hooks/useEditorHistory";
@@ -26,7 +29,8 @@ import type { ProjectMaterial, ProjectV2 } from "@/lib/project/types";
 import { importDxfToVectorDocument } from "@/lib/vector/dxf";
 import { exportVectorDocumentToSvg, importSvgToVectorDocument } from "@/lib/vector/svg";
 import { commitDocument, createId, type Vec2, type VectorDocument } from "@/lib/vector/types";
-import { createVectorText, insertVectorText } from "@/lib/vector/text";
+import { createVectorText, insertVectorText, textForSelectedPaths } from "@/lib/vector/text";
+import { TOOL_CONTEXT, type EditorTool } from "@/lib/editor/tool-context";
 
 type SaveStatus = "loading" | "saving" | "saved" | "error";
 
@@ -51,6 +55,7 @@ export default function Home() {
   const history = useEditorHistory(initialProject.document);
   const [project, setProject] = useState<ProjectV2>(initialProject);
   const [tool, setTool] = useState<EditorTool>("select");
+  const [inspectorMode, setInspectorMode] = useState<InspectorMode>("design");
   const [view, setView] = useState<"2d" | "3d">("2d");
   const [selectedPathIds, setSelectedPathIds] = useState<string[]>([]);
   const [selectedNodes, setSelectedNodes] = useState<SelectedNodeRef[]>([]);
@@ -119,6 +124,22 @@ export default function Home() {
   const operationIssues = useMemo(() => activeOperation ? validateCamOperation(activeOperation, history.document, project.material) : [], [activeOperation, history.document, project.material]);
   const previewPaths = activeOperation && !isCamOperationStale(activeOperation, history.document) ? activeOperation.generatedToolPaths : [];
   const previewDepths = activeOperation ? buildPassDepths(activeOperation.settings.finalDepth, activeOperation.settings.stepDown) : [];
+  const { selectedText, selectedObjectCount } = useMemo(() => {
+    const selectedIdSet = new Set(selectedPathIds);
+    const selectedTextObjects = (history.document.texts ?? []).filter((text) => text.pathIds.some((id) => selectedIdSet.has(id)));
+    return {
+      selectedText: textForSelectedPaths(history.document, selectedPathIds),
+      selectedObjectCount: selectedTextObjects.length + history.document.paths.filter((path) => selectedIdSet.has(path.id) && !path.sourceTextId).length,
+    };
+  }, [history.document, selectedPathIds]);
+  const hasStaleOperation = useMemo(() => project.camOperations.some((operation) => isCamOperationStale(operation, history.document)), [history.document, project.camOperations]);
+
+  const selectEditorTool = useCallback((nextTool: EditorTool) => {
+    setTool(nextTool);
+    if (nextTool !== "direct") setSelectedNodes([]);
+    if (nextTool !== "hand" && nextTool !== "zoom") setInspectorMode("design");
+    setView("2d");
+  }, []);
 
   const selectBit = (id: string) => {
     const bit = project.tools.library.find((item) => item.id === id);
@@ -146,6 +167,7 @@ export default function Home() {
       setProject((current) => ({ ...current, camOperations: [...current.camOperations, operation] }));
       setActiveOperationId(operation.id);
       setView("3d");
+      setInspectorMode("cam");
       setOperationName(`センターライン ${project.camOperations.length + 2}`);
       setNotice("ツールパスを計算しました。3Dで深さと進入を確認してください。");
     } catch (reason) {
@@ -179,6 +201,7 @@ export default function Home() {
         history.commit(commitDocument(history.document, imported.document.paths, imported.document.pathOrder));
         setProject((current) => ({ ...current, name: file.name.replace(/\.dxf$/i, "") }));
         setSelectedPathIds(imported.document.pathOrder);
+        setInspectorMode("design");
         setNotice(`${imported.entityCount} DXF entityをVectorDocumentへ読み込みました。${imported.unitWarning ?? ""}`);
         setView("2d");
       } else {
@@ -186,6 +209,7 @@ export default function Home() {
         history.commit(commitDocument(history.document, imported.paths, imported.pathOrder));
         setProject((current) => ({ ...current, name: file.name.replace(/\.svg$/i, "") }));
         setSelectedPathIds(imported.pathOrder);
+        setInspectorMode("design");
         setNotice("SVGを編集可能なLine/Cubic pathへ読み込みました。");
         setView("2d");
       }
@@ -198,6 +222,7 @@ export default function Home() {
     const next = createNewProject();
     loadProject(next);
     setTool("select");
+    setInspectorMode("design");
     setOperationName("センターライン 1");
     setNotice("新規Projectを作成しました。");
   };
@@ -229,13 +254,13 @@ export default function Home() {
         onSave={() => { void save(); }}
         onUndo={history.undo}
         onRedo={history.redo}
-        onViewChange={setView}
+        onViewChange={(nextView) => { setView(nextView); if (nextView === "3d") setInspectorMode("cam"); }}
       />
       <input ref={jsonInputRef} type="file" accept=".json,application/json" hidden onChange={(event) => { void handleFile(event.target.files?.[0], "json"); event.target.value = ""; }} />
       <input ref={dxfInputRef} type="file" accept=".dxf,application/dxf" hidden onChange={(event) => { void handleFile(event.target.files?.[0], "dxf"); event.target.value = ""; }} />
       <input ref={svgInputRef} type="file" accept=".svg,image/svg+xml" hidden onChange={(event) => { void handleFile(event.target.files?.[0], "svg"); event.target.value = ""; }} />
 
-      <ToolBar activeTool={tool} onChange={(nextTool) => { setTool(nextTool); if (nextTool !== "direct") setSelectedNodes([]); setView("2d"); }} />
+      <ToolBar activeTool={tool} onChange={selectEditorTool} />
 
       <section className="editor-workspace" aria-label={view === "2d" ? "ベクター編集Canvas" : "3DツールパスPreview"}>
         {view === "2d" ? (
@@ -249,7 +274,7 @@ export default function Home() {
             snapEnabled={snapEnabled}
             gridVisible={gridVisible}
             gridSizeMm={gridSizeMm}
-            onToolChange={setTool}
+            onToolChange={selectEditorTool}
             onDocumentCommit={commitEditorDocument}
             onSelectionChange={setSelectedPathIds}
             onNodeSelectionChange={setSelectedNodes}
@@ -260,6 +285,7 @@ export default function Home() {
               commitEditorDocument(next);
               setSelectedPathIds(next.texts?.find((item) => item.id === text.id)?.pathIds ?? []);
               setSelectedNodes([]);
+              setInspectorMode("design");
             }}
             onUndo={history.undo}
             onRedo={history.redo}
@@ -277,6 +303,16 @@ export default function Home() {
             rampLength={activeOperation?.settings.rampLength}
           />
         )}
+        {view === "2d" && <ContextBar
+          tool={tool}
+          selectionCount={selectedObjectCount}
+          selectedNodeCount={selectedNodes.length}
+          textSelected={Boolean(selectedText)}
+          onSelectTool={selectEditorTool}
+          onFitSelection={() => previewRef.current?.fitSelection?.()}
+          onOpenCam={() => setInspectorMode("cam")}
+        />}
+        {view === "2d" && storageReady && history.document.paths.length === 0 && (history.document.texts?.length ?? 0) === 0 && <CanvasStartGuide material={project.material} onToolChange={selectEditorTool} />}
         <div className="canvas-controls">
           <button type="button" onClick={() => previewRef.current?.zoomIn()} aria-label="拡大"><ZoomIn size={17} /></button>
           <button type="button" onClick={() => previewRef.current?.zoomOut()} aria-label="縮小"><ZoomOut size={17} /></button>
@@ -288,10 +324,13 @@ export default function Home() {
       </section>
 
       <aside className="right-panel">
-        <TextPanel document={history.document} selectedPathIds={selectedPathIds} onSelectionChange={(ids) => { setSelectedPathIds(ids); setSelectedNodes([]); }} onCommit={commitEditorDocument} />
-        <PropertiesPanel document={history.document} selectedPathIds={selectedPathIds} selectedNodes={selectedNodes} onCommit={commitEditorDocument} />
-        <PathListPanel document={history.document} selectedPathIds={selectedPathIds} onSelectionChange={(ids) => { setSelectedPathIds(ids); setSelectedNodes([]); }} onCommit={commitEditorDocument} />
-        <CamPanel
+        <InspectorTabs mode={inspectorMode} operationCount={project.camOperations.length} stale={hasStaleOperation} onChange={setInspectorMode} />
+        <div className="inspector-content">
+        {inspectorMode === "design" ? <>
+          {(tool === "text" || (history.document.texts?.length ?? 0) > 0) && <TextPanel document={history.document} selectedPathIds={selectedPathIds} onSelectionChange={(ids) => { setSelectedPathIds(ids); setSelectedNodes([]); }} onCommit={commitEditorDocument} />}
+          <PropertiesPanel document={history.document} selectedPathIds={selectedPathIds} selectedNodes={selectedNodes} onCommit={commitEditorDocument} />
+          <PathListPanel document={history.document} selectedPathIds={selectedPathIds} onSelectionChange={(ids) => { setSelectedPathIds(ids); setSelectedNodes([]); }} onCommit={commitEditorDocument} />
+        </> : <CamPanel
           document={history.document}
           material={project.material}
           settings={project.camDraft}
@@ -317,7 +356,8 @@ export default function Home() {
             if (activeOperationId === id) setActiveOperationId(null);
           }}
           onExport={exportGcode}
-        />
+        />}
+        </div>
       </aside>
 
       <footer className="status-bar">
@@ -325,7 +365,8 @@ export default function Home() {
         <span>Snap <button type="button" className={snapEnabled ? "is-active" : ""} onClick={() => setSnapEnabled((current) => !current)}>{snapEnabled ? "ON" : "OFF"}</button></span>
         <span>Grid <button type="button" className={gridVisible ? "is-active" : ""} onClick={() => setGridVisible((current) => !current)}>{gridVisible ? "ON" : "OFF"}</button>
           <select value={gridSizeMm} onChange={(event) => setGridSizeMm(Number(event.target.value) as 1 | 5 | 10)}><option value={1}>1mm</option><option value={5}>5mm</option><option value={10}>10mm</option></select></span>
-        <span className="status-spacer" /><span>単位 mm / Y-up</span><span>Revision {history.document.revision}</span><span>{selectedPathIds.length} パス選択</span>
+        <span className="status-tool"><strong>{TOOL_CONTEXT[tool].label}</strong><kbd>{TOOL_CONTEXT[tool].shortcut}</kbd></span>
+        <span className="status-spacer" /><span>単位 mm / Y-up</span><span>Revision {history.document.revision}</span><span>{selectedText ? "文字を選択" : `${selectedPathIds.length} パス選択`}</span>
       </footer>
     </main>
   );

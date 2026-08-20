@@ -1,5 +1,5 @@
 import { Circle, Hand, Minus, MousePointer2, PenTool, Search, Square, Type, Waypoints } from "lucide-react";
-import type { EditorTool } from "@/components/editor/VectorEditor2D";
+import type { EditorTool } from "@/lib/editor/tool-context";
 
 const tools: Array<{ id: EditorTool; label: string; shortcut: string; icon: typeof MousePointer2 }> = [
   { id: "select", label: "選択", shortcut: "V", icon: MousePointer2 },
@@ -16,10 +16,10 @@ const tools: Array<{ id: EditorTool; label: string; shortcut: string; icon: type
 export function ToolBar({ activeTool, onChange }: { activeTool: EditorTool; onChange: (tool: EditorTool) => void }) {
   return (
     <nav className="tool-bar" aria-label="作図ツール">
-      {tools.map((tool) => {
+      {tools.map((tool, index) => {
         const Icon = tool.icon;
         return (
-          <button key={tool.id} type="button" className={activeTool === tool.id ? "is-active" : ""} onClick={() => onChange(tool.id)} title={`${tool.label} (${tool.shortcut})`} aria-label={`${tool.label} (${tool.shortcut})`}>
+          <button key={tool.id} type="button" className={[activeTool === tool.id ? "is-active" : "", index === 7 ? "tool-navigation-start" : ""].filter(Boolean).join(" ")} onClick={() => onChange(tool.id)} title={`${tool.label} (${tool.shortcut})`} aria-label={`${tool.label} (${tool.shortcut})`}>
             <Icon size={20} />
             <kbd>{tool.shortcut}</kbd>
           </button>

@@ -40,7 +40,20 @@ Projectは材料width/height/thicknessとXY origin、VectorDocument revision、s
 
 参考回転数と刃数はpanelで編集でき、回転数はG-code header commentに記録する。現在のGORDIX6出力は主軸自動起動命令を出さないため、UIにもその旨を明示する。これらの数値は有限な正値でなければexportを拒否する。
 
-## Phase 2B — 次候補
+## Phase 2B — Workspace UX実装済み
+
+- Design / CAM Inspector tab
+- active tool、shortcut、操作hint、selection、次actionを示すContext Bar
+- 空Projectの開始guide
+- Draw → Dimension → CAM → 3Dのworkflow表示
+- Line / Rectangle / Ellipse drag中のmm寸法HUD
+- Escapeでtool完了またはselection解除
+- 作図toolとnavigation toolのgroup分け
+- bottom Status Barへのactive tool表示
+
+InspectorやContext BarはUI stateで、VectorDocumentやDocument Undoへ入れない。CAM tabを開く操作はOperation生成を暗黙実行しない。参考製品の公式資料と採用判断は [`ux.md`](./ux.md) に記録した。
+
+## Phase 2C — 次候補
 
 - 使用許諾を確認したOpenType font asset、source、checksum管理
 - 日本語glyph outlineとfont embedding/export policy

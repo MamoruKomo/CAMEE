@@ -22,7 +22,7 @@ type TopBarProps = {
 export function TopBar(props: TopBarProps) {
   return (
     <header className="top-bar">
-      <div className="cutpath-brand"><span>CP</span><strong>CutPath</strong><small>PHASE 1</small></div>
+      <div className="cutpath-brand"><span>CP</span><strong>CutPath</strong><small>BETA</small></div>
       <div className="project-actions">
         <button type="button" onClick={props.onNew} title="新規Project">新規</button>
         <button type="button" onClick={props.onImport} title="CutPath JSONを読込"><FolderOpen size={16} /> JSON読込</button>

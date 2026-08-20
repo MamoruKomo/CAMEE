@@ -1,4 +1,4 @@
-# Phase 1A / 1B / 2A Verification Record
+# Phase 1A / 1B / 2A / 2B Verification Record
 
 ## Before implementation
 
@@ -67,3 +67,15 @@ Buildには500kB超chunkのwarningがあるがerrorはない。依存auditの20�
 - `npm run check`: success（8 files / 47 tests / production build）。
 
 ローカル開発serverは`http://localhost:3000/`で起動した。Phase 2Aのin-app browser自動操作はBrowser URL policyがlocalhost reloadを拒否したため実施できず、Unit/integration testとproduction buildで代替した。Phase 1A/1Bの既存Browser検証結果は上記の通りである。
+
+## Phase 2B Verification — 2026-08-20
+
+- 9 toolすべてに日本語label、shortcut、操作hintがあることをUnit Testで確認。
+- anchor、text、single/multi pathのselection summary優先順位をUnit Testで確認。
+- Lineの長さ・角度、Rectangle/EllipseのW/Hがmmで算出されることをUnit Testで確認。
+- server-rendered HTMLでContext Bar、Design/CAM Inspector tabs、active tool statusを確認。開始guideはIndexedDB restore完了後の空Projectだけに表示する条件をcode reviewで確認。
+- Inspector mode、Context Bar、dimension HUDがVectorDocument/Project persistenceへ入らないことをcode reviewで確認。
+- production buildと`npm run check`で既存Vector/CAM integrationの回帰がないことを確認。
+- `npm run check`: success（9 files / 50 tests / production build）。
+
+Phase 2Bのin-app browser自動visual verificationは、Phase 2Aと同じlocalhost URL policy制限により未実施。開発serverのHTTP 200とrendered HTML、Unit/integration tests、production buildで代替した。

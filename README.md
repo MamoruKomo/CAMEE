@@ -1,6 +1,6 @@
 # CutPath
 
-CutPathは、CNC加工用の2D図形、Bezierパス、stroke文字をブラウザで作成・編集し、そのままセンターラインCAM、3D確認、GORDIX6向けG-code出力まで進められるベクター/CAM統合ツールです。`Isshin-dev/CAMEE` を基にしたPhase 1A + 1B + 2A実装です。
+CutPathは、CNC加工用の2D図形、Bezierパス、stroke文字をブラウザで作成・編集し、そのままセンターラインCAM、3D確認、GORDIX6向けG-code出力まで進められるベクター/CAM統合ツールです。`Isshin-dev/CAMEE` を基にしたPhase 1A + 1B + 2A + 2B実装です。
 
 ## Phase 1でできること
 
@@ -30,6 +30,15 @@ CutPathは、CNC加工用の2D図形、Bezierパス、stroke文字をブラウ�
 - Path/文字の表示線幅。CAMの工具径とは非連動
 - 参考spindle RPMとflute countの加工記録、安全検証
 - 未対応glyphとfont識別不一致のCAM/G-code hard block
+
+## Phase 2Bで追加したこと
+
+- 右Inspectorを「デザイン／加工」workspaceへ分離
+- tool、shortcut、操作方法、selection、次actionを示すContext Bar
+- 空Projectの開始guideとDraw → Dimension → CAM → 3D workflow
+- Line/Rectangle/Ellipse作図中のmm寸法HUD
+- Escapeによるtool完了／selection解除
+- 作図toolとnavigation toolの視覚的なgroup分け
 
 ## 開発
 

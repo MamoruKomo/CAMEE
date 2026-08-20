@@ -14,6 +14,7 @@ CutPath は、mm 単位の2Dベクターパスをブラウザで作図・編集�
 - Project Version 2を保存し、Version 1は純粋なmigrationで読み込みます。
 - `VectorText`は編集可能なsourceとして保存し、決定的なLine/Cubic `VectorPath`だけを生成します。
 - 表示線幅はstyle metadataであり、工具径や加工幅へ流用しません。
+- Design/CAM InspectorやContext Bar等のUI stateはDocument Undoへ入れません。
 
 ## 絶対禁止事項
 
@@ -47,4 +48,4 @@ npm run check
 
 ## 完了条件
 
-Phase 1Aの作図、Bezier編集、保存／復元、DXF/SVG/JSON入出力、Centerline CAM、3D Preview、安全なG-code出力が一続きで動くこと。Phase 1Bのresize/rotate/duplicate/de Casteljau UI、高度Snap、path reorder、SVG高度Import、H/Z/Fit SelectionがVectorDocumentを正として動くこと。Phase 2Aの再編集可能な文字、表示線幅、Centerline CAM統合、font/glyph safetyが同じデータフローで動くこと。`npm run check` が成功し、ドキュメントと実装が一致すること。
+Phase 1Aの作図、Bezier編集、保存／復元、DXF/SVG/JSON入出力、Centerline CAM、3D Preview、安全なG-code出力が一続きで動くこと。Phase 1Bのresize/rotate/duplicate/de Casteljau UI、高度Snap、path reorder、SVG高度Import、H/Z/Fit SelectionがVectorDocumentを正として動くこと。Phase 2Aの再編集可能な文字、表示線幅、Centerline CAM統合、font/glyph safetyが同じデータフローで動くこと。Phase 2BのContext Bar、Design/CAM Inspector、開始guide、寸法HUDがDocument stateを壊さず動くこと。`npm run check` が成功し、ドキュメントと実装が一致すること。
