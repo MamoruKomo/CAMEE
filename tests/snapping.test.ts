@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { pxToMmThreshold, snapPoint } from "@/lib/vector/snapping";
+import { collectAdvancedTargets, pxToMmThreshold, snapPoint } from "@/lib/vector/snapping";
+import { createLinePath } from "@/lib/vector/shapes";
 
 describe("snapping", () => {
   it("converts a pixel threshold to millimeters", () => expect(pxToMmThreshold(8, 4)).toBe(2));
@@ -9,5 +10,10 @@ describe("snapping", () => {
     const result = snapPoint({ x: 3.2, y: 6.8 }, { thresholdMm: 0.3, alignWith: [{ x: 3, y: 7 }] });
     expect(result.point).toEqual({ x: 3, y: 7 });
     expect(result.guides.map((guide) => guide.kind)).toEqual(expect.arrayContaining(["vertical", "horizontal"]));
+  });
+  it("collects segment midpoints and object centers", () => {
+    const targets = collectAdvancedTargets([createLinePath({ x: 0, y: 0 }, { x: 10, y: 10 })]);
+    expect(targets.map((target) => target.kind)).toEqual(["object-center", "midpoint"]);
+    expect(targets.every((target) => target.point.x === 5 && target.point.y === 5)).toBe(true);
   });
 });

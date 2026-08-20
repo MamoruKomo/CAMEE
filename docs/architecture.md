@@ -1,4 +1,4 @@
-# CutPath Phase 1 Architecture
+# CutPath Phase 1A / 1B Architecture
 
 ## Current CAMEE analysis
 
@@ -30,11 +30,11 @@ Existing centerline CAM / Three.js / G-code
 
 ## Geometry normalization
 
-隣接node間は、両側handleがnullならline、それ以外はcubic Bézierです。Rectangleはcorner node、Ellipse/CircleとDXF ARC/CIRCLE/ELLIPSEはcubic Bézierへ変換します。SVG quadratic/arcの高度対応はPhase 1Bで、Phase 1AのSVG pathはM/L/H/V/C/Zを扱います。DXF SPLINEは既存parserの安全なサンプル結果をcorner nodeへ移す制限があります。
+隣接node間は、両側handleがnullならline、それ以外はcubic Bézierです。Rectangleはcorner node、Ellipse/CircleとDXF ARC/CIRCLE/ELLIPSEはcubic Bézierへ変換します。SVGはM/L/H/V/C/S/Q/T/A/Zを扱い、quadraticとarcをimport時にcubicへ変換します。DXF SPLINEは既存parserの安全なサンプル結果をcorner nodeへ移す制限があります。
 
 ## DXF and SVG data flow
 
-DXFはEditor用importで必ずVectorDocumentへ変換します。LINE/polylineはline node、arc/circle/ellipseはcubic、その他の既存対応curveは有限なcorner nodeへ正規化します。SVG importは要素を直接VectorPathへ正規化し、SVG exportはDOMではなくVectorDocumentからpath dataをserializeします。
+DXFはEditor用importで必ずVectorDocumentへ変換します。LINE/polylineはline node、arc/circle/ellipseはcubic、その他の既存対応curveは有限なcorner nodeへ正規化します。SVG importは要素を直接VectorPathへ正規化します。入れ子のtranslate/scale/rotate/skew/matrixは親子のaffine matrixを合成し、anchorと相対handleへ適用します。SVG exportはDOMではなくVectorDocumentからpath dataをserializeします。
 
 ## CAM Adapter
 
@@ -47,6 +47,8 @@ Phase 1は `centerline` のみです。Operationはsource path ID、計算時rev
 ## State and history
 
 document history、selection、viewport、drawing preview、CAM settingsを分離します。pointer dragは開始時snapshot、移動中preview、pointerupで1回commitします。viewport pan/zoomはdocument historyへ入りません。Undo後の新規commitはredoを破棄します。
+
+Phase 1Bのresize/rotateも同じtransaction方式です。8方向resizeとrotation handleは複数選択boundsを基準にanchor/handleへ確定し、Shiftで比率または15°を固定します。Direct Selectionでsegmentをdouble clickすると最近傍parameterを求め、de Casteljau分割で形状を保持したnodeを追加します。Path reorderは`pathOrder`だけを更新します。
 
 ## Persistence and migration
 
@@ -67,6 +69,6 @@ upstream出力は最初の `G0 X... Y...` より前に安全Zへ退避しませ�
 
 upstreamに `LICENSE` ファイルは存在しません。ライセンスは推測せず、新しいLICENSEも追加しません。
 
-## Phase 1A compatibility decision
+## Upstream compatibility decision
 
-旧 `ToolpathEditor2D` はサンプリング点列を編集データにしており、絶対禁止事項と両立しないため `VectorEditor2D` へ置換した。`lib/cam.ts` のDXF、corner relief、path close/join、ramp、pass depth、estimate、G-code関数は残している。Dogbone/T-boneと複数open pathの自動接続UIは、Bezierを点列へ逆変換する危険な近道を避けるため新Editorには表示していない。VectorPathを正として形状を保持する移植をPhase 1Bで行う。
+旧 `ToolpathEditor2D` はサンプリング点列を編集データにしており、絶対禁止事項と両立しないため `VectorEditor2D` へ置換した。`lib/cam.ts` のDXF、corner relief、path close/join、ramp、pass depth、estimate、G-code関数は残している。Dogbone/T-boneと複数open pathの自動接続UIは、Bezierを点列へ逆変換する危険な近道を避けるため新Editorには表示していない。VectorPathを正にしたまま行う移植はPhase 2候補とする。

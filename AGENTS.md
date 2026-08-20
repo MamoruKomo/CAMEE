@@ -45,4 +45,4 @@ npm run check
 
 ## 完了条件
 
-Phase 1Aの作図、Bezier編集、保存／復元、DXF/SVG/JSON入出力、Centerline CAM、3D Preview、安全なG-code出力が一続きで動き、`npm run check` が成功すること。ドキュメントと実装が一致していること。
+Phase 1Aの作図、Bezier編集、保存／復元、DXF/SVG/JSON入出力、Centerline CAM、3D Preview、安全なG-code出力が一続きで動くこと。Phase 1Bのresize/rotate/duplicate/de Casteljau UI、高度Snap、path reorder、SVG高度Import、H/Z/Fit SelectionがVectorDocumentを正として動くこと。`npm run check` が成功し、ドキュメントと実装が一致すること。

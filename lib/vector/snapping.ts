@@ -1,7 +1,9 @@
 import type { Bounds } from "@/lib/cam";
+import { cubicPoint, segmentCurve } from "./bezier";
+import { getVectorBounds } from "./transform";
 import type { Vec2, VectorPath } from "./types";
 
-export type SnapKind = "grid" | "anchor" | "endpoint" | "material" | "origin" | "horizontal" | "vertical";
+export type SnapKind = "grid" | "anchor" | "endpoint" | "midpoint" | "object-center" | "material" | "origin" | "horizontal" | "vertical";
 export type SnapGuide = { kind: SnapKind; point: Vec2; axis: "x" | "y" | "both" };
 export type SnapResult = { point: Vec2; guides: SnapGuide[] };
 
@@ -17,6 +19,22 @@ export function collectAnchorTargets(paths: VectorPath[], excludedPathIds = new 
       point: node.anchor,
       kind: (index === 0 || (!path.closed && index === path.nodes.length - 1) ? "endpoint" : "anchor") as SnapKind,
     })));
+}
+
+export function collectAdvancedTargets(paths: VectorPath[], excludedPathIds = new Set<string>()) {
+  return paths.flatMap((path) => {
+    if (excludedPathIds.has(path.id) || !path.visible || path.nodes.length < 2) return [];
+    const segmentCount = path.closed ? path.nodes.length : path.nodes.length - 1;
+    const bounds = getVectorBounds([path]);
+    const targets: Array<{ point: Vec2; kind: SnapKind }> = [{
+      point: { x: bounds.minX + bounds.width / 2, y: bounds.minY + bounds.height / 2 },
+      kind: "object-center",
+    }];
+    for (let index = 0; index < segmentCount; index += 1) {
+      targets.push({ point: cubicPoint(segmentCurve(path, index), 0.5), kind: "midpoint" });
+    }
+    return targets;
+  });
 }
 
 export function snapPoint(

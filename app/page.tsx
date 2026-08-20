@@ -1,6 +1,6 @@
 "use client";
 
-import { Maximize2, ZoomIn, ZoomOut } from "lucide-react";
+import { Focus, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ToolpathPreview, type PreviewHandle } from "./ToolpathPreview";
 import { VectorEditor2D, type EditorTool } from "@/components/editor/VectorEditor2D";
@@ -272,6 +272,7 @@ export default function Home() {
           <button type="button" onClick={() => previewRef.current?.zoomIn()} aria-label="拡大"><ZoomIn size={17} /></button>
           <button type="button" onClick={() => previewRef.current?.zoomOut()} aria-label="縮小"><ZoomOut size={17} /></button>
           <button type="button" onClick={() => previewRef.current?.fit()} aria-label="全体表示"><Maximize2 size={17} /></button>
+          {view === "2d" && <button type="button" onClick={() => previewRef.current?.fitSelection?.()} disabled={!selectedPathIds.length} aria-label="選択範囲を表示"><Focus size={17} /></button>}
         </div>
         {view === "3d" && !previewPaths.length && <div className="preview-empty">{activeOperation && isCamOperationStale(activeOperation, history.document) ? "図形が変更されています。ツールパスを再計算してください。" : "センターラインCAMを計算すると3D Previewを表示します。"}</div>}
         {(error || notice) && <div className={`app-notice${error ? " is-error" : ""}`} role={error ? "alert" : "status"}>{error || notice}<button type="button" onClick={() => { setError(""); setNotice(""); }}>×</button></div>}

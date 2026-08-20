@@ -36,6 +36,55 @@ export function cubicPoint(curve: CubicBezier, t: number): Vec2 {
   };
 }
 
+export function closestPointOnPath(path: VectorPath, point: Vec2, samplesPerSegment = 32) {
+  const segmentCount = path.closed ? path.nodes.length : Math.max(0, path.nodes.length - 1);
+  if (!segmentCount) throw new Error("距離を計算できるセグメントがありません。");
+  const sampleCount = Math.max(8, Math.min(256, Math.floor(samplesPerSegment)));
+  let best = { segmentIndex: 0, t: 0, point: path.nodes[0].anchor, distance: Infinity };
+  for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+    const curve = segmentCurve(path, segmentIndex);
+    let bestSample = 0;
+    for (let sample = 0; sample <= sampleCount; sample += 1) {
+      const t = sample / sampleCount;
+      const candidate = cubicPoint(curve, t);
+      const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+      if (distance < best.distance) {
+        best = { segmentIndex, t, point: candidate, distance };
+        bestSample = sample;
+      }
+    }
+    if (best.segmentIndex !== segmentIndex) continue;
+    let low = Math.max(0, (bestSample - 1) / sampleCount);
+    let high = Math.min(1, (bestSample + 1) / sampleCount);
+    for (let iteration = 0; iteration < 16; iteration += 1) {
+      const leftT = low + (high - low) / 3;
+      const rightT = high - (high - low) / 3;
+      const left = cubicPoint(curve, leftT);
+      const right = cubicPoint(curve, rightT);
+      const leftDistance = Math.hypot(left.x - point.x, left.y - point.y);
+      const rightDistance = Math.hypot(right.x - point.x, right.y - point.y);
+      if (leftDistance <= rightDistance) high = rightT;
+      else low = leftT;
+    }
+    const t = (low + high) / 2;
+    const candidate = cubicPoint(curve, t);
+    const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+    if (distance < best.distance) best = { segmentIndex, t, point: candidate, distance };
+  }
+  return best;
+}
+
+export function handlePolar(handle: Vec2) {
+  return { length: Math.hypot(handle.x, handle.y), angleDegrees: Math.atan2(handle.y, handle.x) * 180 / Math.PI };
+}
+
+export function handleFromPolar(length: number, angleDegrees: number): Vec2 | null {
+  if (!Number.isFinite(length) || length < 0 || !Number.isFinite(angleDegrees)) throw new Error("ハンドルの長さと角度は有限値にしてください。");
+  if (length === 0) return null;
+  const radians = angleDegrees * Math.PI / 180;
+  return { x: Math.cos(radians) * length, y: Math.sin(radians) * length };
+}
+
 export function splitCubic(curve: CubicBezier, t: number): [CubicBezier, CubicBezier] {
   const p01 = lerp(curve.p0, curve.p1, t);
   const p12 = lerp(curve.p1, curve.p2, t);

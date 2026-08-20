@@ -1,4 +1,5 @@
-import { Eye, EyeOff, Lock, LockOpen, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Eye, EyeOff, GripVertical, Lock, LockOpen, Trash2 } from "lucide-react";
 import { commitDocument, orderedPaths, type VectorDocument } from "@/lib/vector/types";
 
 export function PathListPanel({
@@ -12,10 +13,19 @@ export function PathListPanel({
   onSelectionChange: (ids: string[]) => void;
   onCommit: (document: VectorDocument) => void;
 }) {
+  const [draggedId, setDraggedId] = useState<string | null>(null);
   const updatePath = (id: string, patch: Partial<{ name: string; visible: boolean; locked: boolean }>) => onCommit(commitDocument(document, document.paths.map((path) => path.id === id ? { ...path, ...patch } : path)));
   const removePath = (id: string) => {
     onCommit(commitDocument(document, document.paths.filter((path) => path.id !== id)));
     onSelectionChange(selectedPathIds.filter((pathId) => pathId !== id));
+  };
+  const reorderBefore = (sourceId: string, targetId: string) => {
+    if (sourceId === targetId) return;
+    const without = document.pathOrder.filter((id) => id !== sourceId);
+    const targetIndex = without.indexOf(targetId);
+    const nextOrder = [...without];
+    nextOrder.splice(targetIndex < 0 ? nextOrder.length : targetIndex, 0, sourceId);
+    onCommit(commitDocument(document, document.paths, nextOrder));
   };
   return (
     <section className="path-list-panel panel-block">
@@ -27,9 +37,15 @@ export function PathListPanel({
             className={`path-row${selectedPathIds.includes(path.id) ? " is-selected" : ""}`}
             role="button"
             tabIndex={0}
-            onClick={(event) => onSelectionChange(event.shiftKey ? [...new Set([...selectedPathIds, path.id])] : [path.id])}
+            draggable
+            onDragStart={(event) => { setDraggedId(path.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", path.id); }}
+            onDragEnd={() => setDraggedId(null)}
+            onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
+            onDrop={(event) => { event.preventDefault(); const sourceId = draggedId ?? event.dataTransfer.getData("text/plain"); if (sourceId) reorderBefore(sourceId, path.id); setDraggedId(null); }}
+            onClick={(event) => onSelectionChange(event.shiftKey ? selectedPathIds.includes(path.id) ? selectedPathIds.filter((id) => id !== path.id) : [...selectedPathIds, path.id] : [path.id])}
             onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectionChange([path.id]); } }}
           >
+            <span className="path-drag-handle" title="ドラッグして並べ替え"><GripVertical size={13} /></span>
             <button type="button" aria-label={path.visible ? "非表示" : "表示"} onClick={(event) => { event.stopPropagation(); updatePath(path.id, { visible: !path.visible }); }}>{path.visible ? <Eye size={14} /> : <EyeOff size={14} />}</button>
             <input
               value={path.name}

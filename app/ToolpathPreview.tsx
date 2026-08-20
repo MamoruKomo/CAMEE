@@ -9,6 +9,7 @@ export type PreviewHandle = {
   zoomIn: () => void;
   zoomOut: () => void;
   fit: () => void;
+  fitSelection?: () => void;
   scaleSelection?: (factor: number) => void;
   rotateSelection?: (degrees: number) => void;
   selectPaths?: (pathIds: string[]) => void;

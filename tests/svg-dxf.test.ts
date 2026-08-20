@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { exportVectorDocumentToSvg, importSvgToVectorDocument } from "@/lib/vector/svg";
+import { exportVectorDocumentToSvg, importSvgToVectorDocument, svgArcToCubics } from "@/lib/vector/svg";
 import { importDxfToVectorDocument } from "@/lib/vector/dxf";
 
 describe("SVG import/export", () => {
@@ -17,6 +17,28 @@ describe("SVG import/export", () => {
     expect(output).toContain("<path");
     expect(output).toContain(" C ");
     expect(output).toContain("mm");
+  });
+
+  it("normalizes S/Q/T/A commands to cubic nodes", () => {
+    const document = importSvgToVectorDocument(`<svg><path d="M0 0 C0 10 10 10 10 0 S20 -10 20 0 Q25 10 30 0 T40 0 A10 10 0 0 1 60 0"/></svg>`);
+    const path = document.paths[0];
+    expect(path.nodes.length).toBeGreaterThanOrEqual(7);
+    expect(path.nodes.slice(1).every((node) => node.inHandle)).toBe(true);
+    expect(path.nodes[path.nodes.length - 1].anchor).toEqual({ x: 60, y: -0 });
+  });
+
+  it("applies nested SVG transforms to anchors and handles", () => {
+    const document = importSvgToVectorDocument(`<svg><g transform="translate(10 20)"><g transform="scale(2)"><path d="M1 2 Q2 4 3 4"/></g></g></svg>`);
+    const path = document.paths[0];
+    expect(path.nodes[0].anchor).toEqual({ x: 12, y: -24 });
+    expect(path.nodes[1].anchor).toEqual({ x: 16, y: -28 });
+    expect(path.nodes[0].outHandle).not.toBeNull();
+  });
+
+  it("converts SVG arcs to at most quarter-turn cubic segments", () => {
+    const cubics = svgArcToCubics({ x: 0, y: 0 }, { x: 20, y: 0 }, 10, 10, 0, false, true);
+    expect(cubics).toHaveLength(2);
+    expect(cubics[1].end).toEqual({ x: 20, y: 0 });
   });
 });
 

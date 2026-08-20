@@ -1,4 +1,4 @@
-# Phase 1A Verification Record
+# Phase 1A / 1B Verification Record
 
 ## Before implementation
 
@@ -33,12 +33,22 @@ In-app browser、`http://localhost:3000/`、300 × 200 × 18mm、lower-left orig
 
 Browser console errorは0件だった。Copy/Pasteは純粋複製test（Bezier handle保持、新ID、5mm offset）で検証し、実ブラウザではBrowser automationのvirtual clipboard制約によりOS shortcutのpaste eventを完走できなかった。
 
+## Phase 1B Browser Verification — 2026-08-20
+
+- ToolbarにH Hand / Z Zoomが表示され、Z clickでzoom表示が255%から319%へ変化した。
+- Cmd+DでPath Listが1件から2件になり、新IDを持つ複製が1 revisionで追加された。
+- 選択時に8 resize handles、1 rotation handle、enabledなFit Selectionを確認した。
+- Path List各行にdrag handleがあり、並べ替え可能な状態を確認した。
+- Direct Selectionのanchor/handle UI、数値handle欄、segment double click経路をUnit Testと実画面で確認した。
+- Browser consoleはVite接続とReact DevTools案内のみで、errorは0件だった。
+- SVG S/Q/T/A、arc cubic化、nested transformはUnit Testで数値検証した。
+
 ## Final automated verification
 
 - `npm ci`: success（508 packages、lockfile再現）
 - `npm run lint`: success
 - `npm run typecheck`: success
-- `npm run test`: success（7 files / 32 tests）
+- `npm run test`: success（7 files / 38 tests）
 - `npm run build`: success
 - `npm run check`: success
 

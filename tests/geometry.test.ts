@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyHandleDrag, cubicPoint, deleteNode, segmentCurve, setNodeType, splitCubic, splitPathSegment } from "@/lib/vector/bezier";
+import { applyHandleDrag, closestPointOnPath, cubicPoint, deleteNode, handleFromPolar, handlePolar, segmentCurve, setNodeType, splitCubic, splitPathSegment } from "@/lib/vector/bezier";
 import { createLinePath } from "@/lib/vector/shapes";
 import { movePath, rotatePath, scalePath } from "@/lib/vector/transform";
 import { createVectorNode, type VectorPath } from "@/lib/vector/types";
@@ -54,5 +54,18 @@ describe("vector geometry", () => {
     expect(smoothDrag.nodes[0].inHandle?.y).toBeCloseTo(-2);
     const symmetric = applyHandleDrag(setNodeType(path, path.nodes[0].id, "symmetric"), path.nodes[0].id, "out", { x: 1, y: 4 });
     expect(symmetric.nodes[0].inHandle).toEqual({ x: -1, y: -4 });
+  });
+
+  it("finds a segment position and edits handles in polar units", () => {
+    const path = createLinePath({ x: 0, y: 0 }, { x: 20, y: 0 });
+    const hit = closestPointOnPath(path, { x: 7, y: 2 });
+    expect(hit.segmentIndex).toBe(0);
+    expect(hit.point.x).toBeCloseTo(7, 2);
+    expect(hit.distance).toBeCloseTo(2, 2);
+    const handle = handleFromPolar(10, 90);
+    expect(handle?.x).toBeCloseTo(0);
+    expect(handle?.y).toBeCloseTo(10);
+    expect(handlePolar(handle!).angleDegrees).toBeCloseTo(90);
+    expect(handleFromPolar(0, 30)).toBeNull();
   });
 });

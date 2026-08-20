@@ -33,4 +33,11 @@ describe("editor history", () => {
     expect(copy.nodes[0].anchor).toEqual({ x: 5, y: -5 });
     expect(copy.nodes[0].outHandle).toEqual({ x: 2, y: 3 });
   });
+
+  it("duplicates in place for Alt-drag without mutating the source", () => {
+    const source = createLinePath({ x: 2, y: 3 }, { x: 12, y: 3 });
+    const [copy] = duplicateVectorPaths([source], 0);
+    expect(copy.nodes[0].anchor).toEqual(source.nodes[0].anchor);
+    expect(copy.id).not.toBe(source.id);
+  });
 });

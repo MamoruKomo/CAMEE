@@ -1,17 +1,20 @@
 # CutPath
 
-CutPathは、CNC加工用の2D図形やBezierパスをブラウザで作成・編集し、そのままセンターラインCAM、3D確認、GORDIX6向けG-code出力まで進められるベクター/CAM統合ツールです。`Isshin-dev/CAMEE` を基にしたPhase 1A実装です。
+CutPathは、CNC加工用の2D図形やBezierパスをブラウザで作成・編集し、そのままセンターラインCAM、3D確認、GORDIX6向けG-code出力まで進められるベクター/CAM統合ツールです。`Isshin-dev/CAMEE` を基にしたPhase 1A + 1B実装です。
 
-## Phase 1Aでできること
+## Phase 1でできること
 
 - mm / X-right / Y-upの`VectorDocument`を編集データの正として保存
 - Selection、Direct Selection、Pen、Line、Rectangle、Ellipse
 - open/closed path、Cubic Bézier anchor/handle、corner/smooth/symmetric
 - 複数選択、範囲選択、移動、削除、copy/paste、undo/redo、数値編集
-- Grid/Anchor/Endpoint/Material/Origin/Horizontal/Vertical snap
-- cursor中心zoom、Space/middle pan、Fit All
+- 8方向resize、rotation handle、Shift比率固定・15°回転、Alt drag複製、Cmd/Ctrl+D
+- segment double clickによるde Casteljau分割、handle長さ/角度の数値編集
+- Grid/Anchor/Endpoint/Midpoint/Object Center/Material/Origin/Horizontal/Vertical snap
+- cursor中心zoom、Space/middle pan、Fit All/Selection、H Hand、Z Zoom
 - DXF → VectorDocument（ARC/CIRCLE/ELLIPSEをcubic化）
-- SVG import（path/line/polyline/polygon/rect/circle/ellipse、M/L/H/V/C/Z）
+- SVG import（path/line/polyline/polygon/rect/circle/ellipse、M/L/H/V/C/S/Q/T/A/Z、nested transform）
+- Path Listのドラッグ並べ替え
 - VectorDocumentからのSVG export、CutPath JSON import/export
 - Project Version 2、Version 1 migration、IndexedDB auto save/reload restore
 - VectorPath → adaptive CAM Adapter → ToolPath → Centerline CAM
@@ -45,4 +48,4 @@ G-code出力前に、非有限値、空／ゼロ長path、加工条件、open pa
 
 実機の本加工前に、必ずビットを材料から離した状態でDry Runしてください。
 
-設計、scope、upstream、実検証結果は [`docs/`](./docs/) を参照してください。参照upstreamにLICENSEファイルはないため、ライセンスを推測して追加していません。
+設計、scope、upstream、実検証結果、文字・加工幅を含むPhase 2要件は [`docs/`](./docs/) を参照してください。参照upstreamにLICENSEファイルはないため、ライセンスを推測して追加していません。

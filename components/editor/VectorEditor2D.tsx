@@ -2,20 +2,20 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { Bounds } from "@/lib/cam";
-import { applyHandleDrag } from "@/lib/vector/bezier";
+import { applyHandleDrag, closestPointOnPath, splitPathSegment } from "@/lib/vector/bezier";
 import { createEllipsePath, createLinePath, createRectanglePath } from "@/lib/vector/shapes";
-import { collectAnchorTargets, pxToMmThreshold, snapPoint, type SnapGuide } from "@/lib/vector/snapping";
+import { collectAdvancedTargets, collectAnchorTargets, pxToMmThreshold, snapPoint, type SnapGuide } from "@/lib/vector/snapping";
 import { vectorPathToSvgData } from "@/lib/vector/svg";
-import { getVectorBounds, movePath } from "@/lib/vector/transform";
+import { getVectorBounds, movePath, rotatePath, scalePath, type VectorBounds } from "@/lib/vector/transform";
 import { cloneVectorDocument, commitDocument, createId, createVectorNode, orderedPaths, type Vec2, type VectorDocument, type VectorPath } from "@/lib/vector/types";
-import { useClipboard } from "@/hooks/useClipboard";
+import { duplicateVectorPaths, useClipboard } from "@/hooks/useClipboard";
 import { useViewport, type EditorViewBox } from "@/hooks/useViewport";
 import type { PreviewHandle } from "@/app/ToolpathPreview";
 import { Grid } from "./Grid";
 import { NodeOverlay, type SelectedNodeRef } from "./NodeOverlay";
-import { SelectionOverlay } from "./SelectionOverlay";
+import { SelectionOverlay, type ResizeHandle } from "./SelectionOverlay";
 
-export type EditorTool = "select" | "direct" | "pen" | "line" | "rectangle" | "ellipse";
+export type EditorTool = "select" | "direct" | "pen" | "line" | "rectangle" | "ellipse" | "hand" | "zoom";
 
 type EditorProps = {
   document: VectorDocument;
@@ -39,6 +39,8 @@ type DragState =
   | { kind: "pan"; startClient: Vec2; startViewBox: EditorViewBox }
   | { kind: "window"; start: Vec2; current: Vec2; additive: boolean }
   | { kind: "move"; start: Vec2; original: VectorDocument; pathIds: string[] }
+  | { kind: "resize"; original: VectorDocument; pathIds: string[]; bounds: VectorBounds; handle: ResizeHandle }
+  | { kind: "rotate"; original: VectorDocument; pathIds: string[]; center: Vec2; startAngle: number }
   | { kind: "node"; start: Vec2; original: VectorDocument; nodes: SelectedNodeRef[] }
   | { kind: "handle"; original: VectorDocument; pathId: string; nodeId: string; side: "in" | "out" }
   | { kind: "shape"; start: Vec2; current: Vec2; tool: "line" | "rectangle" | "ellipse" }
@@ -63,6 +65,33 @@ function moveNodes(document: VectorDocument, nodes: SelectedNodeRef[], delta: Ve
         : node),
     })),
   };
+}
+
+function resizeParameters(bounds: VectorBounds, handle: ResizeHandle, point: Vec2) {
+  const center = { x: bounds.minX + bounds.width / 2, y: bounds.minY + bounds.height / 2 };
+  const east = handle.includes("e");
+  const west = handle.includes("w");
+  const north = handle.includes("n");
+  const south = handle.includes("s");
+  const origin = {
+    x: east ? bounds.minX : west ? bounds.maxX : center.x,
+    y: north ? bounds.minY : south ? bounds.maxY : center.y,
+  };
+  const basisX = east ? bounds.maxX - origin.x : west ? bounds.minX - origin.x : 1;
+  const basisY = north ? bounds.maxY - origin.y : south ? bounds.minY - origin.y : 1;
+  return {
+    origin,
+    scaleX: east || west ? (point.x - origin.x) / Math.max(1e-9, Math.abs(basisX)) * Math.sign(basisX) : 1,
+    scaleY: north || south ? (point.y - origin.y) / Math.max(1e-9, Math.abs(basisY)) * Math.sign(basisY) : 1,
+    changesX: east || west,
+    changesY: north || south,
+  };
+}
+
+function nonZeroScale(value: number) {
+  if (!Number.isFinite(value)) return 1;
+  if (Math.abs(value) >= 0.001) return value;
+  return Math.sign(value || 1) * 0.001;
 }
 
 export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function VectorEditor2D({
@@ -96,6 +125,7 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
   const [selectionWindow, setSelectionWindow] = useState<{ start: Vec2; current: Vec2 } | null>(null);
   const [shapePreview, setShapePreview] = useState<VectorPath | null>(null);
   const shapePreviewRef = useRef<VectorPath | null>(null);
+  const duplicateCountRef = useRef(0);
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
   const [viewportSize, setViewportSize] = useState({ width: 900, height: 600 });
   const { copy, paste } = useClipboard();
@@ -130,6 +160,10 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
     zoomIn: () => viewport.zoomAt({ x: viewport.viewBox.x + viewport.viewBox.width / 2, y: viewport.viewBox.y + viewport.viewBox.height / 2 }, 0.8),
     zoomOut: () => viewport.zoomAt({ x: viewport.viewBox.x + viewport.viewBox.width / 2, y: viewport.viewBox.y + viewport.viewBox.height / 2 }, 1.25),
     fit: () => viewport.fit(combinedBounds()),
+    fitSelection: () => {
+      const paths = documentRef.current.paths.filter((path) => selectedPathIdsRef.current.includes(path.id) && path.visible);
+      if (paths.length) viewport.fit(getVectorBounds(paths));
+    },
     selectPaths: onSelectionChange,
   }), [combinedBounds, onSelectionChange, viewport]);
 
@@ -152,11 +186,12 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
   const snapped = useCallback((point: Vec2, excludedPathIds = new Set<string>()) => {
     if (!snapEnabled) return point;
     const anchors = collectAnchorTargets(documentRef.current.paths, excludedPathIds);
+    const advanced = collectAdvancedTargets(documentRef.current.paths, excludedPathIds);
     const result = snapPoint(point, {
       thresholdMm: pxToMmThreshold(8, pixelsPerMm),
       grid: true,
       gridSizeMm,
-      anchors,
+      anchors: [...anchors, ...advanced],
       material: materialBounds,
       origin: { x: 0, y: 0 },
       alignWith: anchors.map((target) => target.point),
@@ -207,11 +242,31 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
       onSelectionChange(next);
       return;
     }
-    const active = current.includes(path.id) ? current : [path.id];
-    onSelectionChange(active);
+    let active = current.includes(path.id) ? current : [path.id];
     onNodeSelectionChange([]);
-    dragRef.current = { kind: "move", start: clientToWorld(event.clientX, event.clientY), original: cloneVectorDocument(documentRef.current), pathIds: active };
+    let original = cloneVectorDocument(documentRef.current);
+    if (event.altKey) {
+      const duplicates = duplicateVectorPaths(original.paths.filter((item) => active.includes(item.id)), 0);
+      original = { ...original, paths: [...original.paths, ...duplicates], pathOrder: [...original.pathOrder, ...duplicates.map((item) => item.id)] };
+      active = duplicates.map((item) => item.id);
+    }
+    onSelectionChange(active);
+    dragRef.current = { kind: "move", start: clientToWorld(event.clientX, event.clientY), original, pathIds: active };
     svgRef.current?.setPointerCapture(event.pointerId);
+  };
+
+  const splitSegmentAtPointer = (event: React.MouseEvent<SVGPathElement>, path: VectorPath) => {
+    if (tool !== "direct" || path.locked) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const hit = closestPointOnPath(path, clientToWorld(event.clientX, event.clientY));
+    if (hit.distance > pxToMmThreshold(12, pixelsPerMm) || hit.t <= 0.001 || hit.t >= 0.999) return;
+    const nodeId = createId("node");
+    const nextPath = splitPathSegment(path, hit.segmentIndex, hit.t, nodeId);
+    const current = documentRef.current;
+    onDocumentCommit(commitDocument(current, current.paths.map((item) => item.id === path.id ? nextPath : item)));
+    onSelectionChange([path.id]);
+    onNodeSelectionChange([{ pathId: path.id, nodeId }]);
   };
 
   const startNodePointer = (event: React.PointerEvent<SVGCircleElement>, pathId: string, nodeId: string) => {
@@ -236,6 +291,31 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
     svgRef.current?.setPointerCapture(event.pointerId);
   };
 
+  const startResizePointer = (event: React.PointerEvent<SVGCircleElement>, handle: ResizeHandle) => {
+    if (tool !== "select") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const pathIds = selectedPathIdsRef.current;
+    const paths = documentRef.current.paths.filter((path) => pathIds.includes(path.id) && !path.locked);
+    if (!paths.length) return;
+    dragRef.current = { kind: "resize", original: cloneVectorDocument(documentRef.current), pathIds: paths.map((path) => path.id), bounds: getVectorBounds(paths), handle };
+    svgRef.current?.setPointerCapture(event.pointerId);
+  };
+
+  const startRotatePointer = (event: React.PointerEvent<SVGCircleElement>) => {
+    if (tool !== "select") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const pathIds = selectedPathIdsRef.current;
+    const paths = documentRef.current.paths.filter((path) => pathIds.includes(path.id) && !path.locked);
+    if (!paths.length) return;
+    const bounds = getVectorBounds(paths);
+    const center = { x: bounds.minX + bounds.width / 2, y: bounds.minY + bounds.height / 2 };
+    const point = clientToWorld(event.clientX, event.clientY);
+    dragRef.current = { kind: "rotate", original: cloneVectorDocument(documentRef.current), pathIds: paths.map((path) => path.id), center, startAngle: Math.atan2(point.y - center.y, point.x - center.x) };
+    svgRef.current?.setPointerCapture(event.pointerId);
+  };
+
   const startWorkspacePointer = (event: React.PointerEvent<SVGSVGElement>) => {
     if (event.button !== 0 && event.button !== 1) return;
     event.preventDefault();
@@ -244,6 +324,15 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
     if (event.button === 1 || spacePressedRef.current) {
       dragRef.current = { kind: "pan", startClient: { x: event.clientX, y: event.clientY }, startViewBox: { ...viewport.viewBox } };
       svgRef.current?.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (tool === "hand") {
+      dragRef.current = { kind: "pan", startClient: { x: event.clientX, y: event.clientY }, startViewBox: { ...viewport.viewBox } };
+      svgRef.current?.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (tool === "zoom") {
+      viewport.zoomAt({ x: raw.x, y: -raw.y }, event.altKey ? 1.25 : 0.8);
       return;
     }
     if (tool === "select" || tool === "direct") {
@@ -298,12 +387,20 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
     }
     if (drag.kind === "shape") {
       let current = snapped(raw);
-      if (event.shiftKey && drag.tool !== "line") {
-        const size = Math.max(Math.abs(current.x - drag.start.x), Math.abs(current.y - drag.start.y));
-        current = { x: drag.start.x + Math.sign(current.x - drag.start.x || 1) * size, y: drag.start.y + Math.sign(current.y - drag.start.y || 1) * size };
+      if (event.shiftKey) {
+        if (drag.tool === "line") {
+          const delta = { x: current.x - drag.start.x, y: current.y - drag.start.y };
+          const length = Math.hypot(delta.x, delta.y);
+          const angle = Math.round(Math.atan2(delta.y, delta.x) / (Math.PI / 4)) * (Math.PI / 4);
+          current = { x: drag.start.x + Math.cos(angle) * length, y: drag.start.y + Math.sin(angle) * length };
+        } else {
+          const size = Math.max(Math.abs(current.x - drag.start.x), Math.abs(current.y - drag.start.y));
+          current = { x: drag.start.x + Math.sign(current.x - drag.start.x || 1) * size, y: drag.start.y + Math.sign(current.y - drag.start.y || 1) * size };
+        }
       }
       drag.current = current;
-      const preview = drag.tool === "line" ? createLinePath(drag.start, current) : drag.tool === "rectangle" ? createRectanglePath(drag.start, current) : createEllipsePath(drag.start, current);
+      const start = event.altKey && drag.tool !== "line" ? { x: drag.start.x * 2 - current.x, y: drag.start.y * 2 - current.y } : drag.start;
+      const preview = drag.tool === "line" ? createLinePath(start, current) : drag.tool === "rectangle" ? createRectanglePath(start, current) : createEllipsePath(start, current);
       shapePreviewRef.current = preview;
       setShapePreview(preview);
       return;
@@ -313,6 +410,27 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
       const delta = { x: target.x - drag.start.x, y: target.y - drag.start.y };
       const next = withUpdatedPaths(drag.original, new Set(drag.pathIds), (path) => movePath(path, delta));
       showPreview(next);
+      return;
+    }
+    if (drag.kind === "resize") {
+      const parameters = resizeParameters(drag.bounds, drag.handle, raw);
+      let scaleX = nonZeroScale(parameters.scaleX);
+      let scaleY = nonZeroScale(parameters.scaleY);
+      if (event.shiftKey) {
+        const candidate = parameters.changesX && parameters.changesY
+          ? (Math.abs(scaleX - 1) >= Math.abs(scaleY - 1) ? scaleX : scaleY)
+          : parameters.changesX ? scaleX : scaleY;
+        scaleX = nonZeroScale(candidate);
+        scaleY = nonZeroScale(candidate);
+      }
+      showPreview(withUpdatedPaths(drag.original, new Set(drag.pathIds), (path) => scalePath(path, parameters.origin, scaleX, scaleY)));
+      return;
+    }
+    if (drag.kind === "rotate") {
+      const angle = Math.atan2(raw.y - drag.center.y, raw.x - drag.center.x);
+      let delta = angle - drag.startAngle;
+      if (event.shiftKey) delta = Math.round(delta / (Math.PI / 12)) * (Math.PI / 12);
+      showPreview(withUpdatedPaths(drag.original, new Set(drag.pathIds), (path) => rotatePath(path, drag.center, delta)));
       return;
     }
     if (drag.kind === "node") {
@@ -345,7 +463,7 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
       }
       const next = {
         ...draft,
-        nodes: draft.nodes.map((item) => item.id === node.id ? { ...item, outHandle: handle, inHandle: { x: -handle.x, y: -handle.y }, nodeType: "symmetric" as const } : item),
+        nodes: draft.nodes.map((item) => item.id === node.id ? { ...item, outHandle: handle, inHandle: { x: -handle.x, y: -handle.y }, nodeType: event.altKey ? "corner" as const : "symmetric" as const } : item),
       };
       draftPathRef.current = next;
       setDraftPath(next);
@@ -357,7 +475,7 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
     dragRef.current = null;
     setSnapGuides([]);
     if (!drag) return;
-    if (drag.kind === "move" || drag.kind === "node" || drag.kind === "handle") commitPreview(previewDocumentRef.current);
+    if (drag.kind === "move" || drag.kind === "resize" || drag.kind === "rotate" || drag.kind === "node" || drag.kind === "handle") commitPreview(previewDocumentRef.current);
     else if (drag.kind === "window") {
       const windowBounds = rectFromPoints(drag.start, drag.current);
       const hits = documentRef.current.paths.filter((path) => {
@@ -402,6 +520,18 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
         }
         return;
       }
+      if (modifier && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        const sources = documentRef.current.paths.filter((path) => selectedPathIdsRef.current.includes(path.id));
+        if (sources.length) {
+          duplicateCountRef.current += 1;
+          const duplicates = duplicateVectorPaths(sources, duplicateCountRef.current);
+          const current = documentRef.current;
+          onDocumentCommit(commitDocument(current, [...current.paths, ...duplicates], [...current.pathOrder, ...duplicates.map((path) => path.id)]));
+          onSelectionChange(duplicates.map((path) => path.id));
+        }
+        return;
+      }
       if (tool === "pen" && event.key === "Enter") { event.preventDefault(); finalizeDraft(false); return; }
       if (tool === "pen" && event.key === "Escape") { event.preventDefault(); finalizeDraft(false); return; }
       if (tool === "pen" && event.key === "Backspace" && draftPathRef.current) {
@@ -436,7 +566,7 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
         return;
       }
       const shortcut = event.key.toLowerCase();
-      const map: Record<string, EditorTool> = { v: "select", a: "direct", p: "pen", l: "line", r: "rectangle", e: "ellipse" };
+      const map: Record<string, EditorTool> = { v: "select", a: "direct", p: "pen", l: "line", r: "rectangle", e: "ellipse", h: "hand", z: "zoom" };
       if (map[shortcut] && !modifier) { event.preventDefault(); onToolChange(map[shortcut]); }
     };
     const keyup = (event: KeyboardEvent) => { if (event.code === "Space") spacePressedRef.current = false; };
@@ -480,6 +610,7 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
             className={`vector-path${selectedPathIds.includes(path.id) ? " is-selected" : ""}${path.locked ? " is-locked" : ""}`}
             vectorEffect="non-scaling-stroke"
             onPointerDown={(event) => startPathPointer(event, path)}
+            onDoubleClick={(event) => splitSegmentAtPointer(event, path)}
           />
         ))}
         {shapePreview && <path d={vectorPathToSvgData(shapePreview)} className="vector-path drawing-preview" vectorEffect="non-scaling-stroke" />}
@@ -489,7 +620,7 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
             {penCursor && <line x1={draftPath.nodes[draftPath.nodes.length - 1].anchor.x} y1={-draftPath.nodes[draftPath.nodes.length - 1].anchor.y} x2={penCursor.x} y2={-penCursor.y} className="pen-preview-line" vectorEffect="non-scaling-stroke" />}
           </>
         )}
-        <SelectionOverlay bounds={selectedBounds} />
+        <SelectionOverlay bounds={selectedBounds} radiusMm={pointRadius} interactive={tool === "select"} onResizePointerDown={startResizePointer} onRotatePointerDown={startRotatePointer} />
         {tool === "direct" && renderedPaths.filter((path) => selectedPathIds.includes(path.id) && path.visible && !path.locked).map((path) => (
           <NodeOverlay key={path.id} path={path} selectedNodes={selectedNodes} radiusMm={pointRadius} onNodePointerDown={startNodePointer} onHandlePointerDown={startHandlePointer} />
         ))}

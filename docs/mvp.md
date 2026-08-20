@@ -28,14 +28,27 @@ Completion criteriaは、Bezierを点列へ永続化せず、描画→編集→�
 
 ## Phase 1B
 
-8方向resize、rotation handle、ratio lock、15度rotation、Alt duplicate、Cmd/Ctrl+D、segment上のde Casteljau UI、handle length/angle、advanced snap、path reorder、SVG S/Q/T/Aとnested transform、Fit Selection、H/Z toolを候補とします。Phase 1Aの完了を優先します。
+完了済みです。
+
+- 8方向resize、rotation handle、Shift比率固定、Shift 15°rotation
+- Alt drag duplicate、Cmd/Ctrl+D
+- segment double clickによるde Casteljau node追加
+- In/Out handle length・angle数値編集
+- segment midpoint・object center snap
+- Path List drag reorder
+- SVG S/Q/T/Aとnested affine transform
+- Fit Selection、H Hand、Z Zoom
+
+resize/rotate/duplicate/split/reorderは各操作1件としてUndoでき、確定結果はNode/Handleへ反映されます。
 
 ## 対象外
 
 Text、Brush、Gradient、Image Trace、AI drawing、共同編集、account/cloud sync、mobile full support、nesting、profile/pocket/v-carve/3D CAM、advanced boolean/group、material removal simulationは対象外です。
 
+Phase 1完了後の文字編集、加工幅、追加加工metadataは [`phase2.md`](./phase2.md) に要件を分離しています。実装前の項目はUIに表示しません。
+
 ## Known limitations
 
-Phase 1Aはデスクトップ幅1024px以上を対象とします。SVG style/strokeやnested transformは保持しません。DXF SPLINEは編集用cubic復元に必要な完全なNURBS情報を既存parserが提供しないケースがあるため、有限なline segment列へ正規化します。CNC実機実行前には材料からビットを離したDry Runが必要です。
+Phase 1はデスクトップ幅1024px以上を対象とします。SVG style/stroke、CSS、`use`/symbol、textは保持しません。DXF SPLINEは編集用cubic復元に必要な完全なNURBS情報を既存parserが提供しないケースがあるため、有限なline segment列へ正規化します。CNC実機実行前には材料からビットを離したDry Runが必要です。
 
 旧CAMEEのDogbone/T-boneと複数open pathの自動接続UIは、旧ToolPath点列をVectorDocumentへ戻す方式ではBezier情報を失うためPhase 1Aの新Editorへは移植していません。既存CAM純粋関数は残しています。bit libraryはVersion 2で保存・選択できますが、任意bitの追加・詳細編集UIは次段階です。Operationの一括／個別複数file exportは未対応で、選択中Operationを1ファイルずつ安全検査して出力します。

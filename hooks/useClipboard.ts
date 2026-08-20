@@ -5,7 +5,7 @@ import { cloneVectorPath, createId, type VectorPath } from "@/lib/vector/types";
 import { movePath } from "@/lib/vector/transform";
 
 export function duplicateVectorPaths(paths: VectorPath[], pasteCount: number) {
-  const offset = Math.max(1, pasteCount) * 5;
+  const offset = Math.max(0, pasteCount) * 5;
   return paths.map((path) => {
     const duplicate = movePath(cloneVectorPath(path), { x: offset, y: -offset });
     duplicate.id = createId("path");
