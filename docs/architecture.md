@@ -1,4 +1,4 @@
-# CutPath Phase 1A / 1B Architecture
+# CutPath Phase 1A / 1B / 2A Architecture
 
 ## Current CAMEE analysis
 
@@ -32,6 +32,12 @@ Existing centerline CAM / Three.js / G-code
 
 隣接node間は、両側handleがnullならline、それ以外はcubic Bézierです。Rectangleはcorner node、Ellipse/CircleとDXF ARC/CIRCLE/ELLIPSEはcubic Bézierへ変換します。SVGはM/L/H/V/C/S/Q/T/A/Zを扱い、quadraticとarcをimport時にcubicへ変換します。DXF SPLINEは既存parserの安全なサンプル結果をcorner nodeへ移す制限があります。
 
+## Editable text and stroke width
+
+Phase 2Aの`VectorText`は`VectorDocument`内の編集可能なsource objectであり、DOM/SVG textは正にしません。内蔵`CutPath Simplex`のfont ID、`cutpath-simplex-14seg-v1` checksum、outline version 1を保存し、純粋関数が決定的なLine `VectorPath`群を生成します。文字編集はsourceを更新して生成pathをatomicに置換し、1 historyになります。outline化するとsourceとの関連を外し、通常pathへ変換します。
+
+`VectorPath.style.strokeWidthMm`と`VectorText.strokeWidthMm`はEditor/SVGの表示metadataだけです。CAM Adapterはstyleを読まず、加工結果は工具径、工具形状、深さ等で決まります。未対応glyphはpreviewで警告し、Centerline Operation作成を拒否します。font checksum/version不一致はserializationまたはoutline生成時に拒否します。
+
 ## DXF and SVG data flow
 
 DXFはEditor用importで必ずVectorDocumentへ変換します。LINE/polylineはline node、arc/circle/ellipseはcubic、その他の既存対応curveは有限なcorner nodeへ正規化します。SVG importは要素を直接VectorPathへ正規化します。入れ子のtranslate/scale/rotate/skew/matrixは親子のaffine matrixを合成し、anchorと相対handleへ適用します。SVG exportはDOMではなくVectorDocumentからpath dataをserializeします。
@@ -44,6 +50,8 @@ DXFはEditor用importで必ずVectorDocumentへ変換します。LINE/polyline�
 
 Phase 1は `centerline` のみです。Operationはsource path ID、計算時revision、settings、runtime限定の再生成可能なToolPath cacheを持ちます。document revisionが異なる場合はstale表示し、previewとG-code書き出しを禁止します。未実装operationはUIへ出しません。
 
+Phase 2Aは参考spindle RPMとflute countをsettingsとして表示・検査します。GORDIX6 postprocessorはRPMをheader commentへ記録しますが、主軸起動命令を生成しません。目標加工幅、Profile、Pocket、V-Carveは未実装で、UIにも出しません。
+
 ## State and history
 
 document history、selection、viewport、drawing preview、CAM settingsを分離します。pointer dragは開始時snapshot、移動中preview、pointerupで1回commitします。viewport pan/zoomはdocument historyへ入りません。Undo後の新規commitはredoを破棄します。
@@ -53,6 +61,8 @@ Phase 1Bのresize/rotateも同じtransaction方式です。8方向resizeとrotat
 ## Persistence and migration
 
 IndexedDB名とstore/keyは互換性のため `camee-projects/projects/current-project` を継承し、保存payloadだけVersion 2へ更新します。Version 1 `displayPaths`（なければdrawing paths）は各pointをcorner nodeへ変換し、元データは変更しません。JSON import/exportも同じmigration/validation経路を使い、Bezier handleを数値のままroundtripします。CAMのサンプリング済みToolPath cacheはJSON/IndexedDBへ永続化せず、保存Operationのrevisionをstaleにしてreload後の再計算を必須にします。
+
+`VectorText` source、font checksum、outline version、生成path対応も同じVectorDocument JSONでroundtripします。古いVersion 2 documentに`texts`がない場合は空配列として読み込みます。文字はsourceだけでなく決定的な生成Line pathも保存し、対応IDをvalidationすることでreload直後の表示とCAM source selectionを安定させます。編集時はsourceから再生成します。
 
 ## G-code safety and golden policy
 

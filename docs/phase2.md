@@ -1,137 +1,61 @@
-# CutPath Phase 2 Requirements
+# CutPath Phase 2
 
-## Goal
+## Phase 2A — 実装済み
 
-Phase 2は、Phase 1の`VectorDocument -> CAM Adapter -> ToolPath`境界とCNC安全性を維持しながら、文字の入力・再編集と、加工結果としての幅を明確に扱う。UIに未実装機能を表示しないため、この文書の項目は実装済みではない。
+Phase 2Aは、Phase 1の`VectorDocument -> CAM Adapter -> ToolPath`境界を維持したまま、再編集可能な文字と加工データの区別を追加した。
 
-## 文字の入力と編集
+### 文字データ
 
-文字は単なるSVG/DOM textとして保存せず、`VectorDocument`内の編集可能なsource objectとして保持する。CAMへ渡すGeometryは必ずfont outlineをLine/Cubic Bézierへ正規化したVectorPathにする。
+`VectorText`を`VectorDocument`内のsource objectとして保存する。文字列、名前、位置、サイズ、字間、行間、整列、回転、表示線幅、表示・ロック、生成path IDに加え、内蔵フォントID、checksum、outline versionを保持する。
 
-提案モデル:
+内蔵の`CutPath Simplex`は決定的な14-segment CNC stroke fontである。A–Z、0–9、空白と一部記号をLine segmentへ変換し、DOM text、Canvas raster、OSローカルフォントをCAM Geometryとして使用しない。生成された各strokeは通常のopen `VectorPath`で、CAM計算時だけ既存Adapterを通って`ToolPath`になる。
 
-```ts
-type VectorText = {
-  id: string;
-  name: string;
-  text: string;
-  font: {
-    family: string;
-    style: string;
-    weight: number;
-    sourceId: string;
-    checksum: string;
-  };
-  fontSizeMm: number;
-  letterSpacingMm: number;
-  lineHeightMm: number;
-  align: "left" | "center" | "right";
-  position: Vec2;
-  rotationDegrees: number;
-  visible: boolean;
-  locked: boolean;
-};
-```
+実装済み操作:
 
-必要な操作:
+- Text Tool（T）で配置
+- 右panelで文字列・複数行・名前を再編集
+- font size、letter spacing、line height、left/center/right、X/Y、rotation
+- 表示、lock、copy/paste、Cmd/Ctrl+D、arrow move、delete、undo/redo
+- IndexedDB / CutPath JSON保存とreload後の再編集
+- 明示的なアウトライン化。実行後は通常VectorPathとしてnode編集可能
+- SVG export時のBezier/Lineと表示線幅保持
+- 文字strokeからCenterline CAM、3D Preview、安全なG-codeへの接続
 
-- Text Toolで入力し、ダブルクリックで再編集
-- font、size、weight、letter spacing、line height、alignment変更
-- mm単位のX/Y、Width/Height、rotation
-- 複数行と改行
-- Undo/Redo、copy/paste、保存/reload
-- 「アウトライン化」を明示操作として提供し、Undoで文字へ戻せる
-- CAM作成時はoutline生成結果を使い、DOM描画結果やCanvas rasterを使わない
-- font未取得、checksum不一致、glyph欠落時はCAM/G-codeを禁止する
+font ID、checksum、outline versionが一致しないProjectは読込またはoutline生成を拒否する。未対応glyphはEditorで`?` previewと警告を表示するが、CAM計算とG-code生成はhard blockする。
 
-フォントは名前だけでは別PCで形が変わる。再現性のため、利用許諾を確認できるfont assetの参照とchecksumをProjectへ保存する。OSローカルフォントを無断で埋め込まない。
-
-## 「太さ」の定義
-
-同じ「太さ」というラベルで異なる値を兼用しない。
+### 「太さ」の分離
 
 | 項目 | 意味 | 保存先 | Centerline CAMへの影響 |
 | --- | --- | --- | --- |
-| 表示線幅 | Editor/SVG上の見た目 | style metadata | 影響させない |
-| 工具径 | 使用するbitの実径 | Tool / CamSettings | 実加工幅の基準 |
-| 目標加工幅 | 作りたい溝・文字線の幅 | CamOperation settings | 工具径より広い場合は複数offsetが必要 |
-| 切削深さ | Z方向の加工量 | CamSettings | pass depthとG-codeへ反映 |
-| 輪郭代 | 仕上げ用allowance | 将来のProfile/Pocket operation | Centerlineでは使用しない |
+| 表示線幅 | Editor/SVG上の見た目 | `VectorPath.style` / `VectorText.strokeWidthMm` | 影響しない |
+| 工具径 | 使用bitの径 | Tool / `CamSettings.bitDiameter` | 加工結果の基準 |
+| 目標加工幅 | 作りたい溝の幅 | 未実装 | 複数offsetが必要なためUIに出さない |
+| 切削深さ | Z方向の加工量 | `CamSettings.finalDepth` | pass depthとG-codeへ反映 |
 
-Phase 2で線幅UIを追加する場合も、表示線幅をそのまま工具径や加工幅に変換しない。`目標加工幅 > 工具径`は複数offsetまたはPocket相当の新Operationが必要なため、対応実装と安全検証が完了するまで設定を有効に見せない。
+Centerline panelは工具径を独立表示し、工具形状・切込み・runoutで実際の溝幅が変わることを案内する。表示線幅を工具径や加工幅へ変換しない。
 
-## 加工データに必要な情報
+### 加工データ
 
-### Project / Material
+Projectは材料width/height/thicknessとXY origin、VectorDocument revision、source path ID、open/closed Geometry、bit library、tool diameter/type/name、depth/step-down、feed/plunge/rapid、safe Z、ramp、参考spindle RPM、flute count、through-cut許可を保持する。
 
-- unitsはmm固定
-- 材料のwidth、height、thickness
-- XY originとmachine zeroの説明
-- material種類と推奨値（任意metadata）
-- stock外path警告
+参考回転数と刃数はpanelで編集でき、回転数はG-code header commentに記録する。現在のGORDIX6出力は主軸自動起動命令を出さないため、UIにもその旨を明示する。これらの数値は有限な正値でなければexportを拒否する。
 
-### Geometry source
+## Phase 2B — 次候補
 
-- source object/path ID
-- open/closed
-- Line/Cubic Bézier nodesと有限座標
-- path order、visibility、lock
-- document revision
-- 文字の場合はfont checksumとoutline生成version
+- 使用許諾を確認したOpenType font asset、source、checksum管理
+- 日本語glyph outlineとfont embedding/export policy
+- Canvas上のダブルクリックinline text editing
+- 文字列全体のWidth/Height数値編集
+- 任意bit追加・tool number・machine/postprocessor profile
+- chip load計算と材料別の推奨値（自動決定ではなく案内）
+- VectorPathを正にしたDogbone/T-boneとpath join/close UI
 
-### Tool
+`目標加工幅 > 工具径`、Profile、Pocket、V-Carveはoffset/inside-outside判定と追加の安全検証が必要であり、実装完了まで有効なUIを表示しない。
 
-- tool ID、名称、type
-- diameter
-- V-bit angle、tip diameter（該当時）
-- flute count、cutting length（将来の推奨値計算用）
-- tool number（tool change対応時）
+## Known limitations
 
-### CamOperation
-
-- operation ID、type、name
-- source IDs、source revision
-- tool IDとbit geometry snapshot
-- final depth、step down
-- feed rate、plunge rate、rapid feed
-- spindle speed（Phase 2候補。postprocessorが対応する場合のみ出力）
-- retract/safe Z
-- ramp enabled/lengthとclosed path制約
-- tolerance、max segments
-- target width、offset strategy（実装されたOperationだけ）
-- through cut許可
-- warning acknowledgement
-
-### Output / Safety
-
-- postprocessor IDとversion
-- machine/profile名
-- generated timestampとdocument/operation revision
-- toolpath bounds、estimated minutes、pass depths
-- 最初のXY rapidより前のsafe Z
-- NaN/Infinity、empty/zero length、材料外、厚さ超過検査
-- stale operationのhard block
-- Export前warning一覧とDry Run案内
-
-## 推奨実装順序
-
-1. Font loader、license/source/checksum管理
-2. `VectorText`とProject migration
-3. Text Tool、再編集、properties、history、persistence
-4. OpenType glyph outlineをLine/Cubicへ正規化する純粋関数とgolden tests
-5. 明示的なアウトライン化とUndo
-6. 文字outlineから既存Centerline CAMまでのE2E
-7. 表示線幅style（CAM非連動）
-8. 目標加工幅Operationの仕様、安全検証、preview、G-code tests
-9. spindle/tool number/postprocessor metadata
-
-## Completion criteria
-
-- 入力した文字を保存・reload後に文字として再編集できる
-- 同じfont checksumから同じBezier outlineが得られる
-- アウトライン化後もLine/Cubic以外をCAMへ渡さない
-- 見た目の線幅変更だけでG-codeが変化しない
-- 工具径・目標加工幅・深さが別フィールドで明示される
-- font不明またはstaleな文字OperationからG-codeを出せない
-- 文字→outline→Centerline CAM→3D→安全なG-codeが完走する
-- migration、roundtrip、outline、CAM、golden testを追加し`npm run check`が成功する
+- 内蔵stroke fontは英大文字、数字、一部記号のみ。小文字は大文字化される。
+- 日本語と未対応glyphはCAMへ出力できない。
+- 文字の再編集は右panelで行い、Canvas上のinline caret編集は未対応。
+- 文字をアウトライン化すると通常pathになり、文字列としての再編集はできない（直後のUndoは可能）。
+- 表示線幅は加工幅ではない。Centerlineは単一中心線のみで、目標幅のoffset加工は未実装。

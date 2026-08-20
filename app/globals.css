@@ -83,6 +83,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, svg:focus-visib
 .vector-editor-svg.tool-direct { cursor: default; }
 .vector-editor-svg.tool-pen { cursor: crosshair; }
 .vector-editor-svg.tool-line, .vector-editor-svg.tool-rectangle, .vector-editor-svg.tool-ellipse { cursor: crosshair; }
+.vector-editor-svg.tool-text { cursor: text; }
 .vector-editor-svg.tool-hand { cursor: grab; }
 .vector-editor-svg.tool-hand:active { cursor: grabbing; }
 .vector-editor-svg.tool-zoom { cursor: zoom-in; }
@@ -93,6 +94,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, svg:focus-visib
 .vector-path.is-selected { stroke: var(--accent); stroke-width: 2; }
 .vector-path.is-locked { stroke: #8b9398; stroke-dasharray: 4 3; }
 .vector-path.drawing-preview { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; pointer-events: none; }
+.vector-path-width { fill: none; stroke: #8fd2da; opacity: .62; pointer-events: none; }
 .selection-window { fill: rgba(8,127,148,.08); stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; pointer-events: none; }
 .selection-overlay:not(.is-interactive) { pointer-events: none; }
 .resize-handle, .rotation-handle { fill: white; stroke: var(--accent); stroke-width: 1; }
@@ -140,6 +142,25 @@ button:focus-visible, input:focus-visible, select:focus-visible, svg:focus-visib
 .secondary-action { width: 100%; height: 28px; border: 1px solid #b9c2c7; background: white; color: #4d575c; font-size: 9px; }
 .secondary-action:hover { border-color: var(--accent); color: var(--accent); }
 .handle-fields { padding-top: 2px; border-top: 1px dotted var(--line); }
+.property-note { margin: 8px 0 0; color: #6f777b; font-size: 8px; line-height: 1.4; }
+
+.text-object-list { display: flex; max-height: 96px; flex-direction: column; overflow: auto; border: 1px solid var(--line); }
+.text-object-list > button { display: grid; grid-template-columns: 18px minmax(50px,.7fr) minmax(80px,1fr); min-height: 30px; align-items: center; gap: 4px; padding: 3px 6px; border: 0; border-bottom: 1px solid var(--line); background: white; color: #596166; text-align: left; }
+.text-object-list > button:last-child { border-bottom: 0; }
+.text-object-list > button.is-active { background: var(--accent-light); color: #075c6b; }
+.text-object-list span, .text-object-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.text-object-list span { font-size: 9px; font-weight: 800; }
+.text-object-list small { color: #7d858a; font-size: 8px; }
+.text-editor-fields { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.text-editor-fields > .text-field { margin-top: 7px; }
+.text-field textarea { width: 100%; resize: vertical; min-height: 52px; padding: 7px 8px; border: 1px solid #c7cdd1; background: white; color: var(--ink); font-size: 11px; line-height: 1.4; }
+.text-warning, .text-cam-note { margin: 8px 0 0; padding: 7px; font-size: 9px; line-height: 1.4; }
+.text-warning { border-left: 2px solid var(--warning); background: #fff9ee; color: #76501d; }
+.text-cam-note { border-left: 2px solid var(--accent); background: #f1fafb; color: #285d65; }
+.text-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 9px; }
+.text-actions button { display: flex; height: 30px; align-items: center; justify-content: center; gap: 5px; border: 1px solid #bcc5ca; background: white; font-size: 9px; }
+.text-actions button:hover { border-color: var(--accent); color: var(--accent); }
+.text-actions button.is-danger:hover { border-color: var(--danger); color: var(--danger); }
 
 .path-list-panel { padding-bottom: 8px; }
 .path-list { max-height: 190px; overflow: auto; scrollbar-width: thin; }
@@ -157,6 +178,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, svg:focus-visib
 .cam-section { margin-top: 10px; padding-top: 1px; border-top: 1px solid var(--line); }
 .material-grid { grid-template-columns: repeat(3, 1fr); }
 .cam-section > .select-field, .cam-section > .text-field { margin-top: 9px; }
+.cam-width-note, .cam-metadata-note { margin: 8px 0 0; font-size: 8px; line-height: 1.45; }
+.cam-width-note { padding: 7px; border-left: 2px solid var(--accent); background: #f1fafb; color: #285d65; }
+.cam-metadata-note { color: #747c80; }
 .through-cut { margin-top: 4px; color: var(--warning); }
 .calculate-cam, .gcode-export { display: flex; width: 100%; height: 34px; align-items: center; justify-content: center; gap: 7px; margin-top: 9px; border: 0; background: var(--accent); color: white; font-size: 10px; font-weight: 800; }
 .calculate-cam:hover, .gcode-export:hover { background: #076b7d; }

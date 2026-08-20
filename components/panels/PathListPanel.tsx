@@ -13,6 +13,7 @@ export function PathListPanel({
   onSelectionChange: (ids: string[]) => void;
   onCommit: (document: VectorDocument) => void;
 }) {
+  const standalonePaths = orderedPaths(document).filter((path) => !path.sourceTextId);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const updatePath = (id: string, patch: Partial<{ name: string; visible: boolean; locked: boolean }>) => onCommit(commitDocument(document, document.paths.map((path) => path.id === id ? { ...path, ...patch } : path)));
   const removePath = (id: string) => {
@@ -29,9 +30,9 @@ export function PathListPanel({
   };
   return (
     <section className="path-list-panel panel-block">
-      <div className="panel-heading"><h2>パス</h2><span>{document.paths.length}</span></div>
+      <div className="panel-heading"><h2>パス</h2><span>{standalonePaths.length}</span></div>
       <div className="path-list">
-        {orderedPaths(document).map((path) => (
+        {standalonePaths.map((path) => (
           <div
             key={path.id}
             className={`path-row${selectedPathIds.includes(path.id) ? " is-selected" : ""}`}
@@ -60,7 +61,7 @@ export function PathListPanel({
             <button type="button" aria-label="削除" onClick={(event) => { event.stopPropagation(); removePath(path.id); }}><Trash2 size={14} /></button>
           </div>
         ))}
-        {!document.paths.length && <p className="empty-hint">作図ツールでパスを追加</p>}
+        {!standalonePaths.length && <p className="empty-hint">作図ツールでパスを追加</p>}
       </div>
     </section>
   );

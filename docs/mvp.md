@@ -41,14 +41,20 @@ Completion criteriaは、Bezierを点列へ永続化せず、描画→編集→�
 
 resize/rotate/duplicate/split/reorderは各操作1件としてUndoでき、確定結果はNode/Handleへ反映されます。
 
+## Phase 2A
+
+完了済みです。Text Tool（T）、編集可能な`VectorText`、内蔵CNC stroke font、文字properties、保存/reload、copy/paste、outline化、表示線幅、Centerline CAM統合、参考回転数・刃数の加工metadataを追加しました。
+
+文字はsource objectとして保存し、生成strokeはLine `VectorPath`です。未対応文字、font checksum不一致、stale operationはCAM/G-codeを拒否します。表示線幅はCAM非連動です。
+
 ## 対象外
 
-Text、Brush、Gradient、Image Trace、AI drawing、共同編集、account/cloud sync、mobile full support、nesting、profile/pocket/v-carve/3D CAM、advanced boolean/group、material removal simulationは対象外です。
+Brush、Gradient、Image Trace、AI drawing、共同編集、account/cloud sync、mobile full support、nesting、profile/pocket/v-carve/3D CAM、advanced boolean/group、material removal simulationは対象外です。
 
-Phase 1完了後の文字編集、加工幅、追加加工metadataは [`phase2.md`](./phase2.md) に要件を分離しています。実装前の項目はUIに表示しません。
+文字編集、加工幅、追加加工metadataの実装状況と次候補は [`phase2.md`](./phase2.md) に記録しています。未実装項目はUIに表示しません。
 
 ## Known limitations
 
-Phase 1はデスクトップ幅1024px以上を対象とします。SVG style/stroke、CSS、`use`/symbol、textは保持しません。DXF SPLINEは編集用cubic復元に必要な完全なNURBS情報を既存parserが提供しないケースがあるため、有限なline segment列へ正規化します。CNC実機実行前には材料からビットを離したDry Runが必要です。
+デスクトップ幅1024px以上を対象とします。SVG CSS、`use`/symbol、SVG text要素のimportは保持しません。CutPath内で作成した文字はLine pathと表示線幅をSVG exportします。DXF SPLINEは編集用cubic復元に必要な完全なNURBS情報を既存parserが提供しないケースがあるため、有限なline segment列へ正規化します。CNC実機実行前には材料からビットを離したDry Runが必要です。
 
-旧CAMEEのDogbone/T-boneと複数open pathの自動接続UIは、旧ToolPath点列をVectorDocumentへ戻す方式ではBezier情報を失うためPhase 1Aの新Editorへは移植していません。既存CAM純粋関数は残しています。bit libraryはVersion 2で保存・選択できますが、任意bitの追加・詳細編集UIは次段階です。Operationの一括／個別複数file exportは未対応で、選択中Operationを1ファイルずつ安全検査して出力します。
+内蔵文字は英大文字・数字・一部記号のみで、日本語glyphは未対応です。旧CAMEEのDogbone/T-boneと複数open pathの自動接続UIは、旧ToolPath点列をVectorDocumentへ戻す方式ではBezier情報を失うため新Editorへは移植していません。既存CAM純粋関数は残しています。bit libraryはVersion 2で保存・選択できますが、任意bitの追加・詳細編集UIは次段階です。Operationの一括／個別複数file exportは未対応で、選択中Operationを1ファイルずつ安全検査して出力します。

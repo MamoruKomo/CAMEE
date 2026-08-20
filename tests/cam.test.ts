@@ -42,4 +42,14 @@ describe("CAM operation safety", () => {
       expect.objectContaining({ code: "THROUGH_CUT", severity: "error" }),
     ]));
   });
+  it("rejects invalid spindle metadata", () => {
+    const vectorPath = createLinePath({ x: 10, y: 10 }, { x: 20, y: 10 });
+    const document = { ...createEmptyDocument(), paths: [vectorPath], pathOrder: [vectorPath.id] };
+    const operation = buildCenterlineOperation(document, [vectorPath.id], { ...settings, spindleRpm: 0, fluteCount: Number.NaN }, { id: "op", name: "Centerline", now: 1 });
+    const issues = validateCamOperation(operation, document, { width: 300, height: 200, thickness: 18, origin: "lower-left", allowThroughCut: false });
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "INVALID_SPINDLERPM", severity: "error" }),
+      expect.objectContaining({ code: "INVALID_FLUTECOUNT", severity: "error" }),
+    ]));
+  });
 });

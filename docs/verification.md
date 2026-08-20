@@ -1,4 +1,4 @@
-# Phase 1A / 1B Verification Record
+# Phase 1A / 1B / 2A Verification Record
 
 ## Before implementation
 
@@ -48,8 +48,22 @@ Browser console errorは0件だった。Copy/Pasteは純粋複製test（Bezier h
 - `npm ci`: success（508 packages、lockfile再現）
 - `npm run lint`: success
 - `npm run typecheck`: success
-- `npm run test`: success（7 files / 38 tests）
+- `npm run test`: success（8 files / 47 tests、Phase 2A時点）
 - `npm run build`: success
 - `npm run check`: success
 
 Buildには500kB超chunkのwarningがあるがerrorはない。依存auditの20件は変更前と同数で、破壊的な`npm audit fix --force`は実行していない。
+
+## Phase 2A Verification — 2026-08-20
+
+- Text sourceから有限なLine `VectorPath`が決定的に生成されることをUnit Testで確認。
+- 文字列、位置、サイズ、表示線幅、font ID/checksum/outline version、生成path対応がVectorDocumentとProject V2でroundtripすることを確認。
+- 文字更新時に生成pathが一括置換され、outline化後は通常pathになることを確認。
+- 表示線幅を変更してもCAM AdapterのToolPathが変わらないことを確認。
+- 文字strokeから既存Centerline Operationを生成できることを確認。
+- 未対応glyphとfont checksum不一致をCAM前に拒否することを確認。
+- spindle RPM / flute countの非有限値・0をexport safety errorにすることを確認。
+- SVG exportが表示線幅を保持することを確認。
+- `npm run check`: success（8 files / 47 tests / production build）。
+
+ローカル開発serverは`http://localhost:3000/`で起動した。Phase 2Aのin-app browser自動操作はBrowser URL policyがlocalhost reloadを拒否したため実施できず、Unit/integration testとproduction buildで代替した。Phase 1A/1Bの既存Browser検証結果は上記の通りである。

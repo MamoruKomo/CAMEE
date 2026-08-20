@@ -43,7 +43,7 @@ export function exportVectorDocumentToSvg(document: VectorDocument) {
   const height = Math.max(1, bounds.height);
   const minX = bounds.width ? bounds.minX : bounds.minX - 0.5;
   const minY = bounds.height ? -bounds.maxY : -bounds.maxY - 0.5;
-  const body = paths.map((path) => `  <path id="${escapeXml(path.id)}" data-name="${escapeXml(path.name)}" d="${vectorPathToSvgData(path)}" fill="none" stroke="#111" stroke-width="0.2"/>`).join("\n");
+  const body = paths.map((path) => `  <path id="${escapeXml(path.id)}" data-name="${escapeXml(path.name)}" d="${vectorPathToSvgData(path)}" fill="none" stroke="#111" stroke-width="${format(path.style?.strokeWidthMm ?? 0.2)}"/>`).join("\n");
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     `<svg xmlns="http://www.w3.org/2000/svg" width="${format(width)}mm" height="${format(height)}mm" viewBox="${format(minX)} ${format(minY)} ${format(width)} ${format(height)}">`,
@@ -285,7 +285,11 @@ export function importSvgToVectorDocument(source: string): VectorDocument {
     const matrix = multiplyMatrices(stack[stack.length - 1], parseSvgTransform(attrs.transform));
     if (supportedShapes.has(tag)) {
       const name = attrs["data-name"] || attrs.id || `SVG ${++shapeNumber}`;
-      paths.push(...shapePaths(tag, attrs, name).map((path) => applySvgMatrixToPath(path, matrix)));
+      const strokeWidth = Number.parseFloat(attrs["stroke-width"] ?? "");
+      paths.push(...shapePaths(tag, attrs, name).map((path) => applySvgMatrixToPath({
+        ...path,
+        style: Number.isFinite(strokeWidth) && strokeWidth >= 0 ? { strokeWidthMm: strokeWidth } : path.style,
+      }, matrix)));
     }
     if (!/\/\s*>$/.test(match[0])) stack.push(matrix);
   }

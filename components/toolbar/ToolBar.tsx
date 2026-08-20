@@ -1,4 +1,4 @@
-import { Circle, Hand, Minus, MousePointer2, PenTool, Search, Square, Waypoints } from "lucide-react";
+import { Circle, Hand, Minus, MousePointer2, PenTool, Search, Square, Type, Waypoints } from "lucide-react";
 import type { EditorTool } from "@/components/editor/VectorEditor2D";
 
 const tools: Array<{ id: EditorTool; label: string; shortcut: string; icon: typeof MousePointer2 }> = [
@@ -8,6 +8,7 @@ const tools: Array<{ id: EditorTool; label: string; shortcut: string; icon: type
   { id: "line", label: "線", shortcut: "L", icon: Minus },
   { id: "rectangle", label: "長方形", shortcut: "R", icon: Square },
   { id: "ellipse", label: "楕円", shortcut: "E", icon: Circle },
+  { id: "text", label: "文字", shortcut: "T", icon: Type },
   { id: "hand", label: "手のひら", shortcut: "H", icon: Hand },
   { id: "zoom", label: "ズーム", shortcut: "Z", icon: Search },
 ];

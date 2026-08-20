@@ -9,13 +9,14 @@ import { vectorPathToSvgData } from "@/lib/vector/svg";
 import { getVectorBounds, movePath, rotatePath, scalePath, type VectorBounds } from "@/lib/vector/transform";
 import { cloneVectorDocument, commitDocument, createId, createVectorNode, orderedPaths, type Vec2, type VectorDocument, type VectorPath } from "@/lib/vector/types";
 import { duplicateVectorPaths, useClipboard } from "@/hooks/useClipboard";
+import { deleteVectorText, insertVectorText, updateVectorText } from "@/lib/vector/text";
 import { useViewport, type EditorViewBox } from "@/hooks/useViewport";
 import type { PreviewHandle } from "@/app/ToolpathPreview";
 import { Grid } from "./Grid";
 import { NodeOverlay, type SelectedNodeRef } from "./NodeOverlay";
 import { SelectionOverlay, type ResizeHandle } from "./SelectionOverlay";
 
-export type EditorTool = "select" | "direct" | "pen" | "line" | "rectangle" | "ellipse" | "hand" | "zoom";
+export type EditorTool = "select" | "direct" | "pen" | "line" | "rectangle" | "ellipse" | "text" | "hand" | "zoom";
 
 type EditorProps = {
   document: VectorDocument;
@@ -31,6 +32,7 @@ type EditorProps = {
   onSelectionChange: (pathIds: string[]) => void;
   onNodeSelectionChange: (nodes: SelectedNodeRef[]) => void;
   onCursorPosition: (point: Vec2) => void;
+  onTextCreate: (point: Vec2) => void;
   onUndo: () => void;
   onRedo: () => void;
 };
@@ -38,7 +40,7 @@ type EditorProps = {
 type DragState =
   | { kind: "pan"; startClient: Vec2; startViewBox: EditorViewBox }
   | { kind: "window"; start: Vec2; current: Vec2; additive: boolean }
-  | { kind: "move"; start: Vec2; original: VectorDocument; pathIds: string[] }
+  | { kind: "move"; start: Vec2; original: VectorDocument; pathIds: string[]; textIds: string[] }
   | { kind: "resize"; original: VectorDocument; pathIds: string[]; bounds: VectorBounds; handle: ResizeHandle }
   | { kind: "rotate"; original: VectorDocument; pathIds: string[]; center: Vec2; startAngle: number }
   | { kind: "node"; start: Vec2; original: VectorDocument; nodes: SelectedNodeRef[] }
@@ -108,6 +110,7 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
   onSelectionChange,
   onNodeSelectionChange,
   onCursorPosition,
+  onTextCreate,
   onUndo,
   onRedo,
 }, ref) {
@@ -126,6 +129,8 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
   const [shapePreview, setShapePreview] = useState<VectorPath | null>(null);
   const shapePreviewRef = useRef<VectorPath | null>(null);
   const duplicateCountRef = useRef(0);
+  const copiedTextsRef = useRef<(NonNullable<VectorDocument["texts"]>[number])[]>([]);
+  const textPasteCountRef = useRef(0);
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
   const [viewportSize, setViewportSize] = useState({ width: 900, height: 600 });
   const { copy, paste } = useClipboard();
@@ -207,7 +212,7 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
 
   const commitPreview = useCallback((preview: VectorDocument | null) => {
     if (!preview) return;
-    onDocumentCommit(commitDocument(documentRef.current, preview.paths, preview.pathOrder));
+    onDocumentCommit(commitDocument(documentRef.current, preview.paths, preview.pathOrder, { texts: preview.texts ?? [], textOrder: preview.textOrder }));
     previewDocumentRef.current = null;
     setPreviewDocument(null);
   }, [onDocumentCommit]);
@@ -227,10 +232,31 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
   }, [onDocumentCommit, onSelectionChange]);
 
   const startPathPointer = (event: React.PointerEvent<SVGPathElement>, path: VectorPath) => {
-    if (event.button !== 0 || path.locked) return;
+    if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     svgRef.current?.focus();
+    if (path.sourceTextId) {
+      const ids = documentRef.current.paths.filter((item) => item.sourceTextId === path.sourceTextId).map((item) => item.id);
+      const current = selectedPathIdsRef.current;
+      if (event.shiftKey) {
+        onSelectionChange(current.some((id) => ids.includes(id)) ? current.filter((id) => !ids.includes(id)) : [...new Set([...current, ...ids])]);
+        onNodeSelectionChange([]);
+        return;
+      }
+      const active = current.some((id) => ids.includes(id)) ? current : ids;
+      onSelectionChange(active);
+      onNodeSelectionChange([]);
+      if (tool === "select" && !path.locked) {
+        const selected = new Set(documentRef.current.paths.filter((item) => active.includes(item.id) && !item.locked).map((item) => item.id));
+        const texts = (documentRef.current.texts ?? []).filter((text) => !text.locked && text.pathIds.some((id) => selected.has(id)));
+        texts.forEach((text) => text.pathIds.forEach((id) => selected.add(id)));
+        dragRef.current = { kind: "move", start: clientToWorld(event.clientX, event.clientY), original: cloneVectorDocument(documentRef.current), pathIds: [...selected], textIds: texts.map((text) => text.id) };
+        svgRef.current?.setPointerCapture(event.pointerId);
+      }
+      return;
+    }
+    if (path.locked) return;
     if (tool === "direct") {
       if (!selectedPathIdsRef.current.includes(path.id)) onSelectionChange([path.id]);
       return;
@@ -245,18 +271,22 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
     let active = current.includes(path.id) ? current : [path.id];
     onNodeSelectionChange([]);
     let original = cloneVectorDocument(documentRef.current);
-    if (event.altKey) {
+    const activeSet = new Set(original.paths.filter((item) => active.includes(item.id) && !item.locked).map((item) => item.id));
+    const selectedTexts = (original.texts ?? []).filter((text) => !text.locked && text.pathIds.some((id) => activeSet.has(id)));
+    selectedTexts.forEach((text) => text.pathIds.forEach((id) => activeSet.add(id)));
+    active = [...activeSet];
+    if (event.altKey && !selectedTexts.length) {
       const duplicates = duplicateVectorPaths(original.paths.filter((item) => active.includes(item.id)), 0);
       original = { ...original, paths: [...original.paths, ...duplicates], pathOrder: [...original.pathOrder, ...duplicates.map((item) => item.id)] };
       active = duplicates.map((item) => item.id);
     }
     onSelectionChange(active);
-    dragRef.current = { kind: "move", start: clientToWorld(event.clientX, event.clientY), original, pathIds: active };
+    dragRef.current = { kind: "move", start: clientToWorld(event.clientX, event.clientY), original, pathIds: active, textIds: selectedTexts.map((text) => text.id) };
     svgRef.current?.setPointerCapture(event.pointerId);
   };
 
   const splitSegmentAtPointer = (event: React.MouseEvent<SVGPathElement>, path: VectorPath) => {
-    if (tool !== "direct" || path.locked) return;
+    if (tool !== "direct" || path.locked || path.sourceTextId) return;
     event.preventDefault();
     event.stopPropagation();
     const hit = closestPointOnPath(path, clientToWorld(event.clientX, event.clientY));
@@ -335,6 +365,10 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
       viewport.zoomAt({ x: raw.x, y: -raw.y }, event.altKey ? 1.25 : 0.8);
       return;
     }
+    if (tool === "text") {
+      onTextCreate(snapped(raw));
+      return;
+    }
     if (tool === "select" || tool === "direct") {
       const drag = { kind: "window" as const, start: raw, current: raw, additive: event.shiftKey };
       dragRef.current = drag;
@@ -408,7 +442,10 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
     if (drag.kind === "move") {
       const target = snapped(raw, new Set(drag.pathIds));
       const delta = { x: target.x - drag.start.x, y: target.y - drag.start.y };
-      const next = withUpdatedPaths(drag.original, new Set(drag.pathIds), (path) => movePath(path, delta));
+      const next = {
+        ...withUpdatedPaths(drag.original, new Set(drag.pathIds), (path) => movePath(path, delta)),
+        texts: (drag.original.texts ?? []).map((text) => drag.textIds.includes(text.id) ? { ...text, position: { x: text.position.x + delta.x, y: text.position.y + delta.y } } : text),
+      };
       showPreview(next);
       return;
     }
@@ -509,26 +546,61 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
       const modifier = event.metaKey || event.ctrlKey;
       if (modifier && event.key.toLowerCase() === "z") { event.preventDefault(); if (event.shiftKey) onRedo(); else onUndo(); return; }
       if (modifier && event.key.toLowerCase() === "a") { event.preventDefault(); onSelectionChange(documentRef.current.paths.filter((path) => path.visible && !path.locked).map((path) => path.id)); return; }
-      if (modifier && event.key.toLowerCase() === "c") { event.preventDefault(); copy(documentRef.current.paths.filter((path) => selectedPathIdsRef.current.includes(path.id))); return; }
+      if (modifier && event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        const selected = new Set(selectedPathIdsRef.current);
+        const texts = (documentRef.current.texts ?? []).filter((text) => text.pathIds.some((id) => selected.has(id)));
+        copiedTextsRef.current = texts.map((text) => ({ ...text, position: { ...text.position }, pathIds: [...text.pathIds] }));
+        textPasteCountRef.current = 0;
+        copy(documentRef.current.paths.filter((path) => selected.has(path.id) && !path.sourceTextId));
+        return;
+      }
       if (modifier && event.key.toLowerCase() === "v") {
         event.preventDefault();
+        let next = documentRef.current;
+        const createdIds: string[] = [];
+        if (copiedTextsRef.current.length) {
+          textPasteCountRef.current += 1;
+          copiedTextsRef.current.forEach((source) => {
+            const duplicate = { ...source, id: createId("text"), name: `${source.name} のコピー`, position: { x: source.position.x + textPasteCountRef.current * 5, y: source.position.y - textPasteCountRef.current * 5 }, pathIds: [] };
+            next = insertVectorText(next, duplicate);
+            createdIds.push(...(next.texts?.find((text) => text.id === duplicate.id)?.pathIds ?? []));
+          });
+        }
         const duplicates = paste();
         if (duplicates.length) {
-          const current = documentRef.current;
-          onDocumentCommit(commitDocument(current, [...current.paths, ...duplicates], [...current.pathOrder, ...duplicates.map((path) => path.id)]));
-          onSelectionChange(duplicates.map((path) => path.id));
+          next = commitDocument(next, [...next.paths, ...duplicates], [...next.pathOrder, ...duplicates.map((path) => path.id)]);
+          createdIds.push(...duplicates.map((path) => path.id));
+        }
+        if (createdIds.length) {
+          onDocumentCommit(next);
+          onSelectionChange(createdIds);
         }
         return;
       }
       if (modifier && event.key.toLowerCase() === "d") {
         event.preventDefault();
-        const sources = documentRef.current.paths.filter((path) => selectedPathIdsRef.current.includes(path.id));
+        const selected = new Set(selectedPathIdsRef.current);
+        const selectedTexts = (documentRef.current.texts ?? []).filter((text) => text.pathIds.some((id) => selected.has(id)));
+        let next = documentRef.current;
+        const createdIds: string[] = [];
+        if (selectedTexts.length) {
+          selectedTexts.forEach((source) => {
+            const duplicate = { ...source, id: createId("text"), name: `${source.name} のコピー`, position: { x: source.position.x + 5, y: source.position.y - 5 }, pathIds: [] };
+            next = insertVectorText(next, duplicate);
+            createdIds.push(...(next.texts?.find((text) => text.id === duplicate.id)?.pathIds ?? []));
+          });
+        }
+        const sources = documentRef.current.paths.filter((path) => selected.has(path.id) && !path.sourceTextId);
         if (sources.length) {
           duplicateCountRef.current += 1;
           const duplicates = duplicateVectorPaths(sources, duplicateCountRef.current);
-          const current = documentRef.current;
-          onDocumentCommit(commitDocument(current, [...current.paths, ...duplicates], [...current.pathOrder, ...duplicates.map((path) => path.id)]));
-          onSelectionChange(duplicates.map((path) => path.id));
+          next = commitDocument(next, [...next.paths, ...duplicates], [...next.pathOrder, ...duplicates.map((path) => path.id)]);
+          createdIds.push(...duplicates.map((path) => path.id));
+        }
+        if (createdIds.length) {
+          onDocumentCommit(next);
+          onSelectionChange(createdIds);
         }
         return;
       }
@@ -544,6 +616,19 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
       if (event.key === "Delete" || event.key === "Backspace") {
         event.preventDefault();
         const current = documentRef.current;
+        const selectedPathSet = new Set(selectedPathIdsRef.current);
+        const selectedTexts = (current.texts ?? []).filter((text) => text.pathIds.some((id) => selectedPathSet.has(id)));
+        if (selectedTexts.length) {
+          let next = current;
+          selectedTexts.filter((text) => !text.locked).forEach((text) => { next = deleteVectorText(next, text.id); });
+          const standaloneIds = new Set(current.paths.filter((path) => selectedPathSet.has(path.id) && !path.sourceTextId && !path.locked).map((path) => path.id));
+          if (standaloneIds.size) next = commitDocument(next, next.paths.filter((path) => !standaloneIds.has(path.id)));
+          if (next !== current) {
+            onDocumentCommit(next);
+            onSelectionChange([]);
+          }
+          return;
+        }
         if (tool === "direct" && selectedNodesRef.current.length) {
           const selected = new Set(selectedNodesRef.current.map((item) => `${item.pathId}:${item.nodeId}`));
           const paths = current.paths.map((path) => ({ ...path, nodes: path.nodes.filter((node) => !selected.has(`${path.id}:${node.id}`)) })).filter((path) => path.nodes.length >= 2);
@@ -561,12 +646,27 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
         const step = event.shiftKey ? 10 : 1;
         const delta = { x: event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0, y: event.key === "ArrowDown" ? -step : event.key === "ArrowUp" ? step : 0 };
         const current = documentRef.current;
-        if (tool === "direct" && selectedNodesRef.current.length) onDocumentCommit(commitDocument(current, moveNodes(current, selectedNodesRef.current, delta).paths));
+        const selected = new Set(selectedPathIdsRef.current);
+        const selectedTextObjects = (current.texts ?? []).filter((text) => text.pathIds.some((id) => selected.has(id)));
+        if (selectedTextObjects.length) {
+          const selectedTexts = selectedTextObjects.filter((text) => !text.locked);
+          let next = current;
+          selectedTexts.forEach((text) => { next = updateVectorText(next, text.id, { position: { x: text.position.x + delta.x, y: text.position.y + delta.y } }); });
+          const standaloneIds = new Set(current.paths.filter((path) => selected.has(path.id) && !path.sourceTextId && !path.locked).map((path) => path.id));
+          if (standaloneIds.size) next = commitDocument(next, withUpdatedPaths(next, standaloneIds, (path) => movePath(path, delta)).paths);
+          if (next !== current) {
+            onDocumentCommit(next);
+            onSelectionChange([
+              ...selectedTexts.flatMap((text) => next.texts?.find((item) => item.id === text.id)?.pathIds ?? []),
+              ...standaloneIds,
+            ]);
+          }
+        } else if (tool === "direct" && selectedNodesRef.current.length) onDocumentCommit(commitDocument(current, moveNodes(current, selectedNodesRef.current, delta).paths));
         else if (selectedPathIdsRef.current.length) onDocumentCommit(commitDocument(current, withUpdatedPaths(current, new Set(selectedPathIdsRef.current), (path) => movePath(path, delta)).paths));
         return;
       }
       const shortcut = event.key.toLowerCase();
-      const map: Record<string, EditorTool> = { v: "select", a: "direct", p: "pen", l: "line", r: "rectangle", e: "ellipse", h: "hand", z: "zoom" };
+      const map: Record<string, EditorTool> = { v: "select", a: "direct", p: "pen", l: "line", r: "rectangle", e: "ellipse", t: "text", h: "hand", z: "zoom" };
       if (map[shortcut] && !modifier) { event.preventDefault(); onToolChange(map[shortcut]); }
     };
     const keyup = (event: KeyboardEvent) => { if (event.code === "Space") spacePressedRef.current = false; };
@@ -581,6 +681,7 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
   }, [displayDocument.paths, selectedPathIds]);
   const windowRect = selectionWindow ? rectFromPoints(selectionWindow.start, selectionWindow.current) : null;
   const renderedPaths = orderedPaths(displayDocument);
+  const selectionContainsText = displayDocument.paths.some((path) => selectedPathIds.includes(path.id) && path.sourceTextId);
 
   return (
     <div className="vector-editor">
@@ -604,14 +705,16 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
         <line x1={viewport.viewBox.x} y1={0} x2={viewport.viewBox.x + viewport.viewBox.width} y2={0} className="origin-axis" vectorEffect="non-scaling-stroke" />
         <line x1={0} y1={viewport.viewBox.y} x2={0} y2={viewport.viewBox.y + viewport.viewBox.height} className="origin-axis" vectorEffect="non-scaling-stroke" />
         {renderedPaths.filter((path) => path.visible && path.nodes.length >= 2).map((path) => (
-          <path
-            key={path.id}
-            d={vectorPathToSvgData(path)}
-            className={`vector-path${selectedPathIds.includes(path.id) ? " is-selected" : ""}${path.locked ? " is-locked" : ""}`}
-            vectorEffect="non-scaling-stroke"
-            onPointerDown={(event) => startPathPointer(event, path)}
-            onDoubleClick={(event) => splitSegmentAtPointer(event, path)}
-          />
+          <g key={path.id}>
+            {path.style && path.style.strokeWidthMm > 0 && <path d={vectorPathToSvgData(path)} className="vector-path-width" strokeWidth={path.style.strokeWidthMm} />}
+            <path
+              d={vectorPathToSvgData(path)}
+              className={`vector-path${selectedPathIds.includes(path.id) ? " is-selected" : ""}${path.locked ? " is-locked" : ""}`}
+              vectorEffect="non-scaling-stroke"
+              onPointerDown={(event) => startPathPointer(event, path)}
+              onDoubleClick={(event) => splitSegmentAtPointer(event, path)}
+            />
+          </g>
         ))}
         {shapePreview && <path d={vectorPathToSvgData(shapePreview)} className="vector-path drawing-preview" vectorEffect="non-scaling-stroke" />}
         {draftPath && draftPath.nodes.length > 0 && (
@@ -620,8 +723,8 @@ export const VectorEditor2D = forwardRef<PreviewHandle, EditorProps>(function Ve
             {penCursor && <line x1={draftPath.nodes[draftPath.nodes.length - 1].anchor.x} y1={-draftPath.nodes[draftPath.nodes.length - 1].anchor.y} x2={penCursor.x} y2={-penCursor.y} className="pen-preview-line" vectorEffect="non-scaling-stroke" />}
           </>
         )}
-        <SelectionOverlay bounds={selectedBounds} radiusMm={pointRadius} interactive={tool === "select"} onResizePointerDown={startResizePointer} onRotatePointerDown={startRotatePointer} />
-        {tool === "direct" && renderedPaths.filter((path) => selectedPathIds.includes(path.id) && path.visible && !path.locked).map((path) => (
+        <SelectionOverlay bounds={selectedBounds} radiusMm={pointRadius} interactive={tool === "select" && !selectionContainsText} onResizePointerDown={startResizePointer} onRotatePointerDown={startRotatePointer} />
+        {tool === "direct" && renderedPaths.filter((path) => selectedPathIds.includes(path.id) && path.visible && !path.locked && !path.sourceTextId).map((path) => (
           <NodeOverlay key={path.id} path={path} selectedNodes={selectedNodes} radiusMm={pointRadius} onNodePointerDown={startNodePointer} onHandlePointerDown={startHandlePointer} />
         ))}
         {draftPath && <NodeOverlay path={draftPath} selectedNodes={draftPath.nodes.map((node) => ({ pathId: draftPath.id, nodeId: node.id }))} radiusMm={pointRadius} onNodePointerDown={() => undefined} onHandlePointerDown={() => undefined} />}

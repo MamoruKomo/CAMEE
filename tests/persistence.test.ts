@@ -3,6 +3,7 @@ import { createNewProject, defaultCamSettings } from "@/lib/project/defaults";
 import { deserializeProject, migrateProject, serializeProject } from "@/lib/project/migration";
 import { createEllipsePath } from "@/lib/vector/shapes";
 import { buildCenterlineOperation } from "@/lib/cam/operations";
+import { createVectorText, insertVectorText } from "@/lib/vector/text";
 
 describe("Project V2 persistence", () => {
   it("roundtrips JSON and keeps Bézier handles", () => {
@@ -39,5 +40,14 @@ describe("Project V2 persistence", () => {
     const restored = deserializeProject(source);
     expect(restored.camOperations[0].generatedToolPaths).toEqual([]);
     expect(restored.camOperations[0].sourceRevision).toBe(-1);
+  });
+
+  it("roundtrips editable text source and generated path metadata", () => {
+    const project = createNewProject();
+    const text = createVectorText({ x: 12, y: 34 }, "CUT 123");
+    project.document = insertVectorText(project.document, text);
+    const restored = deserializeProject(serializeProject(project));
+    expect(restored.document.texts?.[0]).toMatchObject({ text: "CUT 123", position: { x: 12, y: 34 }, fontChecksum: "cutpath-simplex-14seg-v1", outlineVersion: 1 });
+    expect(restored.document.paths.every((path) => path.sourceTextId === text.id)).toBe(true);
   });
 });

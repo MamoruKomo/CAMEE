@@ -49,6 +49,7 @@ export function CamPanel({
 }) {
   const updateSetting = (key: keyof CamSettings, value: number | boolean) => onSettingsChange({ ...settings, [key]: value });
   const errors = issues.filter((issue) => issue.severity === "error");
+  const activeBit = bits.find((bit) => bit.id === activeBitId);
   return (
     <section className="cam-panel panel-block">
       <h2>材料 / CAM</h2>
@@ -69,6 +70,7 @@ export function CamPanel({
         <h3>センターライン</h3>
         <label className="text-field"><span>Operation名</span><input value={operationName} maxLength={60} onChange={(event) => onOperationNameChange(event.target.value)} /></label>
         <label className="select-field"><span>ビット</span><select value={activeBitId} onChange={(event) => onBitChange(event.target.value)}>{bits.map((bit) => <option key={bit.id} value={bit.id}>{bit.name} / Ø{bit.cuttingDiameter}mm</option>)}</select></label>
+        <p className="cam-width-note">工具径: <strong>Ø{settings.bitDiameter}mm</strong>。実際の溝幅は工具形状・切込み・振れで変わり、表示線幅とは連動しません。</p>
         <div className="cam-grid">
           <NumberField label="最終深さ" value={settings.finalDepth} unit="mm" onChange={(value) => updateSetting("finalDepth", value)} />
           <NumberField label="1回の深さ" value={settings.stepDown} unit="mm" onChange={(value) => updateSetting("stepDown", value)} />
@@ -76,7 +78,10 @@ export function CamPanel({
           <NumberField label="切込" value={settings.plungeRate} unit="mm/min" step={50} onChange={(value) => updateSetting("plungeRate", value)} />
           <NumberField label="退避Z" value={settings.retractHeight} unit="mm" onChange={(value) => updateSetting("retractHeight", value)} />
           <NumberField label="早送り" value={settings.rapidFeed} unit="mm/min" step={100} onChange={(value) => updateSetting("rapidFeed", value)} />
+          <NumberField label="参考回転数" value={settings.spindleRpm ?? 18000} unit="rpm" min={1} step={1000} onChange={(value) => updateSetting("spindleRpm", value)} />
+          <NumberField label="刃数" value={settings.fluteCount ?? activeBit?.fluteCount ?? 2} unit="枚" min={1} step={1} onChange={(value) => updateSetting("fluteCount", value)} />
         </div>
+        <p className="cam-metadata-note">回転数はG-codeの加工情報コメントへ記録します。主軸の自動起動命令は出力しません。</p>
         <label className="check-row"><input type="checkbox" checked={settings.rampEnabled} onChange={(event) => updateSetting("rampEnabled", event.target.checked)} />ランプ進入（閉路のみ）</label>
         {settings.rampEnabled && <NumberField label="ランプ長さ" value={settings.rampLength} unit="mm" onChange={(value) => updateSetting("rampLength", value)} />}
         <label className="check-row through-cut"><input type="checkbox" checked={material.allowThroughCut} onChange={(event) => onMaterialChange({ ...material, allowThroughCut: event.target.checked })} />材料厚を超える貫通加工を許可</label>

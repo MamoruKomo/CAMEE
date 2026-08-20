@@ -8,6 +8,7 @@ import type { SelectedNodeRef } from "@/components/editor/NodeOverlay";
 import { CamPanel } from "@/components/panels/CamPanel";
 import { PathListPanel } from "@/components/panels/PathListPanel";
 import { PropertiesPanel } from "@/components/panels/PropertiesPanel";
+import { TextPanel } from "@/components/panels/TextPanel";
 import { ToolBar } from "@/components/toolbar/ToolBar";
 import { TopBar } from "@/components/toolbar/TopBar";
 import { useEditorHistory } from "@/hooks/useEditorHistory";
@@ -25,6 +26,7 @@ import type { ProjectMaterial, ProjectV2 } from "@/lib/project/types";
 import { importDxfToVectorDocument } from "@/lib/vector/dxf";
 import { exportVectorDocumentToSvg, importSvgToVectorDocument } from "@/lib/vector/svg";
 import { commitDocument, createId, type Vec2, type VectorDocument } from "@/lib/vector/types";
+import { createVectorText, insertVectorText } from "@/lib/vector/text";
 
 type SaveStatus = "loading" | "saving" | "saved" | "error";
 
@@ -252,6 +254,13 @@ export default function Home() {
             onSelectionChange={setSelectedPathIds}
             onNodeSelectionChange={setSelectedNodes}
             onCursorPosition={setCursor}
+            onTextCreate={(point) => {
+              const text = createVectorText(point);
+              const next = insertVectorText(history.document, text);
+              commitEditorDocument(next);
+              setSelectedPathIds(next.texts?.find((item) => item.id === text.id)?.pathIds ?? []);
+              setSelectedNodes([]);
+            }}
             onUndo={history.undo}
             onRedo={history.redo}
           />
@@ -279,6 +288,7 @@ export default function Home() {
       </section>
 
       <aside className="right-panel">
+        <TextPanel document={history.document} selectedPathIds={selectedPathIds} onSelectionChange={(ids) => { setSelectedPathIds(ids); setSelectedNodes([]); }} onCommit={commitEditorDocument} />
         <PropertiesPanel document={history.document} selectedPathIds={selectedPathIds} selectedNodes={selectedNodes} onCommit={commitEditorDocument} />
         <PathListPanel document={history.document} selectedPathIds={selectedPathIds} onSelectionChange={(ids) => { setSelectedPathIds(ids); setSelectedNodes([]); }} onCommit={commitEditorDocument} />
         <CamPanel

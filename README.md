@@ -1,6 +1,6 @@
 # CutPath
 
-CutPathは、CNC加工用の2D図形やBezierパスをブラウザで作成・編集し、そのままセンターラインCAM、3D確認、GORDIX6向けG-code出力まで進められるベクター/CAM統合ツールです。`Isshin-dev/CAMEE` を基にしたPhase 1A + 1B実装です。
+CutPathは、CNC加工用の2D図形、Bezierパス、stroke文字をブラウザで作成・編集し、そのままセンターラインCAM、3D確認、GORDIX6向けG-code出力まで進められるベクター/CAM統合ツールです。`Isshin-dev/CAMEE` を基にしたPhase 1A + 1B + 2A実装です。
 
 ## Phase 1でできること
 
@@ -20,6 +20,16 @@ CutPathは、CNC加工用の2D図形やBezierパスをブラウザで作成・�
 - VectorPath → adaptive CAM Adapter → ToolPath → Centerline CAM
 - Three.js 3D Preview、多段加工、closed path ramp
 - stale operation検出、安全警告、安全Zを先行するG-code
+
+## Phase 2Aで追加したこと
+
+- Text Tool（T）、再編集可能な複数行`VectorText`、位置・サイズ・字間・行間・整列・回転
+- 決定的な内蔵CNC stroke fontとfont checksum / outline version
+- 文字のcopy/paste、duplicate、move、delete、undo/redo、保存/reload、アウトライン化
+- 文字stroke → VectorPath → Centerline CAM → 3D → G-code
+- Path/文字の表示線幅。CAMの工具径とは非連動
+- 参考spindle RPMとflute countの加工記録、安全検証
+- 未対応glyphとfont識別不一致のCAM/G-code hard block
 
 ## 開発
 
@@ -48,4 +58,4 @@ G-code出力前に、非有限値、空／ゼロ長path、加工条件、open pa
 
 実機の本加工前に、必ずビットを材料から離した状態でDry Runしてください。
 
-設計、scope、upstream、実検証結果、文字・加工幅を含むPhase 2要件は [`docs/`](./docs/) を参照してください。参照upstreamにLICENSEファイルはないため、ライセンスを推測して追加していません。
+設計、scope、upstream、実検証結果、Phase 2の実装状況は [`docs/`](./docs/) を参照してください。参照upstreamにLICENSEファイルはないため、ライセンスを推測して追加していません。

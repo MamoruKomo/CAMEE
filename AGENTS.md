@@ -12,6 +12,8 @@ CutPath は、mm 単位の2Dベクターパスをブラウザで作図・編集�
 - CAM計算時だけ `VectorPath -> CAM Adapter -> ToolPath` と変換します。
 - `CamOperation.sourceRevision` と `VectorDocument.revision` が異なるOperationはstaleです。
 - Project Version 2を保存し、Version 1は純粋なmigrationで読み込みます。
+- `VectorText`は編集可能なsourceとして保存し、決定的なLine/Cubic `VectorPath`だけを生成します。
+- 表示線幅はstyle metadataであり、工具径や加工幅へ流用しません。
 
 ## 絶対禁止事項
 
@@ -37,7 +39,7 @@ npm run check
 ## CNC Safety
 
 - 最初のXY Rapidより前に安全Zへ退避する。
-- final depth、step down、feed、plunge、rapid、bit diameterは有限かつ正値にする。
+- final depth、step down、feed、plunge、rapid、bit diameter、参考RPM、刃数は有限かつ正値にする。
 - rampは閉路だけに許可する。
 - 材料外、材料厚超過、貫通加工を出力前に検査する。
 - 貫通加工はユーザーの明示許可が必要。
@@ -45,4 +47,4 @@ npm run check
 
 ## 完了条件
 
-Phase 1Aの作図、Bezier編集、保存／復元、DXF/SVG/JSON入出力、Centerline CAM、3D Preview、安全なG-code出力が一続きで動くこと。Phase 1Bのresize/rotate/duplicate/de Casteljau UI、高度Snap、path reorder、SVG高度Import、H/Z/Fit SelectionがVectorDocumentを正として動くこと。`npm run check` が成功し、ドキュメントと実装が一致すること。
+Phase 1Aの作図、Bezier編集、保存／復元、DXF/SVG/JSON入出力、Centerline CAM、3D Preview、安全なG-code出力が一続きで動くこと。Phase 1Bのresize/rotate/duplicate/de Casteljau UI、高度Snap、path reorder、SVG高度Import、H/Z/Fit SelectionがVectorDocumentを正として動くこと。Phase 2Aの再編集可能な文字、表示線幅、Centerline CAM統合、font/glyph safetyが同じデータフローで動くこと。`npm run check` が成功し、ドキュメントと実装が一致すること。

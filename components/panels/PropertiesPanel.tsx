@@ -61,7 +61,9 @@ export function PropertiesPanel({
             <NumericField label="W" value={bounds.width} onCommit={(value) => { if (value >= 0) updatePath(resizePathToBounds(path, { width: value })); }} />
             <NumericField label="H" value={bounds.height} onCommit={(value) => { if (value >= 0) updatePath(resizePathToBounds(path, { height: value })); }} />
             <NumericField key={`rotation-${document.revision}`} label="回転Δ" value={0} unit="°" onCommit={(value) => updatePath(rotatePath(path, { x: bounds.minX + bounds.width / 2, y: bounds.minY + bounds.height / 2 }, value * Math.PI / 180))} />
+            <NumericField label="表示線幅" value={path.style?.strokeWidthMm ?? 0} onCommit={(value) => { if (value >= 0) updatePath({ ...path, style: { strokeWidthMm: value } }); }} />
           </div>}
+          <p className="property-note">表示線幅はSVGとCanvasの見た目だけです。加工幅はCAMのビット径で設定します。</p>
           <div className="segmented-row">
             <button type="button" className={!path.closed ? "is-active" : ""} onClick={() => updatePath({ ...path, closed: false })}>Open</button>
             <button type="button" className={path.closed ? "is-active" : ""} onClick={() => updatePath({ ...path, closed: true })}>Closed</button>

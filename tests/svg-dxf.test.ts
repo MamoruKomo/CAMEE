@@ -13,10 +13,12 @@ describe("SVG import/export", () => {
 
   it("serializes from VectorDocument and keeps cubic commands", () => {
     const document = importSvgToVectorDocument(`<svg><path data-name="curve" d="M0 0 C0 10 10 10 10 0"/></svg>`);
+    document.paths[0].style = { strokeWidthMm: 1.25 };
     const output = exportVectorDocumentToSvg(document);
     expect(output).toContain("<path");
     expect(output).toContain(" C ");
     expect(output).toContain("mm");
+    expect(output).toContain('stroke-width="1.25"');
   });
 
   it("normalizes S/Q/T/A commands to cubic nodes", () => {

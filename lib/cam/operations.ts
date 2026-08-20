@@ -6,6 +6,7 @@ import {
   type ToolPath,
 } from "@/lib/cam";
 import { vectorPathsToToolPaths } from "@/lib/vector/cam-adapter";
+import { buildTextPaths } from "@/lib/vector/text";
 import type { VectorDocument } from "@/lib/vector/types";
 
 export type CamOperationType = "centerline";
@@ -48,6 +49,11 @@ export function buildCenterlineOperation(
   const ids = new Set(sourcePathIds);
   const sourcePaths = document.paths.filter((path) => ids.has(path.id) && path.visible && !path.locked);
   if (!sourcePaths.length) throw new Error("CAM対象の編集可能なパスを選択してください。");
+  const sourceTextIds = new Set(sourcePaths.flatMap((path) => path.sourceTextId ? [path.sourceTextId] : []));
+  (document.texts ?? []).filter((text) => sourceTextIds.has(text.id)).forEach((text) => {
+    const unsupported = buildTextPaths(text).unsupportedCharacters;
+    if (unsupported.length) throw new Error(`「${text.name}」に未対応文字があります: ${unsupported.join(" ")}。対応文字へ変更するかアウトラインを読み込んでください。`);
+  });
   const generatedToolPaths = vectorPathsToToolPaths(sourcePaths, { toleranceMm: details.toleranceMm ?? 0.05, maxSegments: 20_000 });
   return {
     id: details.id,
@@ -72,9 +78,20 @@ export function validateCamOperation(
     issues.push({ code: "STALE", severity: "error", message: "図形が変更されています。ツールパスを再計算してください。" });
   }
   if (!operation.generatedToolPaths.length) issues.push({ code: "EMPTY", severity: "error", message: "ツールパスが空です。" });
+  const selectedIds = new Set(operation.sourcePathIds);
+  const operationTextIds = new Set(document.paths.filter((path) => selectedIds.has(path.id) && path.sourceTextId).map((path) => path.sourceTextId as string));
+  (document.texts ?? []).filter((text) => operationTextIds.has(text.id)).forEach((text) => {
+    try {
+      const unsupported = buildTextPaths(text).unsupportedCharacters;
+      if (unsupported.length) issues.push({ code: "UNSUPPORTED_TEXT", severity: "error", message: `「${text.name}」に未対応文字があります: ${unsupported.join(" ")}。` });
+    } catch (reason) {
+      issues.push({ code: "INVALID_TEXT_FONT", severity: "error", message: reason instanceof Error ? reason.message : "文字フォント情報が不正です。" });
+    }
+  });
   const positiveSettings: Array<[keyof CamSettings, string]> = [
     ["finalDepth", "最終深さ"], ["stepDown", "1回の深さ"], ["bitDiameter", "ビット径"],
     ["feedRate", "送り速度"], ["plungeRate", "切り込み速度"], ["retractHeight", "退避高さ"], ["rapidFeed", "早送り速度"],
+    ["spindleRpm", "参考回転数"], ["fluteCount", "刃数"],
   ];
   positiveSettings.forEach(([key, label]) => {
     const value = settings[key];
