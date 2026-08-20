@@ -1,0 +1,27 @@
+import { Circle, Minus, MousePointer2, PenTool, Square, Waypoints } from "lucide-react";
+import type { EditorTool } from "@/components/editor/VectorEditor2D";
+
+const tools: Array<{ id: EditorTool; label: string; shortcut: string; icon: typeof MousePointer2 }> = [
+  { id: "select", label: "選択", shortcut: "V", icon: MousePointer2 },
+  { id: "direct", label: "ダイレクト選択", shortcut: "A", icon: Waypoints },
+  { id: "pen", label: "ペン", shortcut: "P", icon: PenTool },
+  { id: "line", label: "線", shortcut: "L", icon: Minus },
+  { id: "rectangle", label: "長方形", shortcut: "R", icon: Square },
+  { id: "ellipse", label: "楕円", shortcut: "E", icon: Circle },
+];
+
+export function ToolBar({ activeTool, onChange }: { activeTool: EditorTool; onChange: (tool: EditorTool) => void }) {
+  return (
+    <nav className="tool-bar" aria-label="作図ツール">
+      {tools.map((tool) => {
+        const Icon = tool.icon;
+        return (
+          <button key={tool.id} type="button" className={activeTool === tool.id ? "is-active" : ""} onClick={() => onChange(tool.id)} title={`${tool.label} (${tool.shortcut})`} aria-label={`${tool.label} (${tool.shortcut})`}>
+            <Icon size={20} />
+            <kbd>{tool.shortcut}</kbd>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}

@@ -1,0 +1,27 @@
+; CNC V4.0
+; Source: golden
+; Tool: straight D3.000 mm
+; Tool name: Straight 3mm
+; Spindle: 18000 RPM
+; Z0 = material top. Start the router manually before cycle start.
+G21
+G90
+G0 Z2.000
+G0 X0.000 Y0.000 F2000
+; Pass 1/3 Z-1.000
+G0 Z2.000
+G0 X10.000 Y10.000
+G1 Z-1.000 F300.000
+G1 X20.000 Y10.000 F1000.000
+; Pass 2/3 Z-2.000
+G0 Z2.000
+G0 X10.000 Y10.000
+G1 Z-2.000 F300.000
+G1 X20.000 Y10.000 F1000.000
+; Pass 3/3 Z-3.000
+G0 Z2.000
+G0 X10.000 Y10.000
+G1 Z-3.000 F300.000
+G1 X20.000 Y10.000 F1000.000
+G0 Z2.000
+M5

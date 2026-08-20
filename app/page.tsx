@@ -1,1186 +1,321 @@
 "use client";
 
-import {
-  Box,
-  Check,
-  CircleDot,
-  CircleAlert,
-  Crosshair,
-  Download,
-  Drill,
-  Expand,
-  FileDown,
-  Files,
-  FileType2,
-  FolderOpen,
-  Grid3X3,
-  Info,
-  Layers3,
-  Link2,
-  Maximize2,
-  MousePointer2,
-  Pencil,
-  Play,
-  Plus,
-  RotateCcw,
-  RotateCw,
-  Rotate3d,
-  Ruler,
-  Save,
-  Scissors,
-  Settings2,
-  Shrink,
-  Trash2,
-  TrendingDown,
-  UnfoldHorizontal,
-  Undo2,
-  Upload,
-  X,
-  ZoomIn,
-  ZoomOut,
-} from "lucide-react";
+import { Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ToolpathEditor2D } from "./ToolpathEditor2D";
 import { ToolpathPreview, type PreviewHandle } from "./ToolpathPreview";
+import { VectorEditor2D, type EditorTool } from "@/components/editor/VectorEditor2D";
+import type { SelectedNodeRef } from "@/components/editor/NodeOverlay";
+import { CamPanel } from "@/components/panels/CamPanel";
+import { PathListPanel } from "@/components/panels/PathListPanel";
+import { PropertiesPanel } from "@/components/panels/PropertiesPanel";
+import { ToolBar } from "@/components/toolbar/ToolBar";
+import { TopBar } from "@/components/toolbar/TopBar";
+import { useEditorHistory } from "@/hooks/useEditorHistory";
+import { buildPassDepths, generateGcode, getMaterialBounds } from "@/lib/cam";
 import {
-  buildPassDepths,
-  closeOpenPaths,
-  estimateMinutes,
-  generateGcode,
-  getBounds,
-  getMaterialBounds,
-  parseDxfText,
-  pathsForMaterial,
-  type CamSettings,
-  type CornerReliefType,
-  type MaterialOrigin,
-  type ParsedDrawing,
-  type ToolPath,
-} from "@/lib/cam";
-
-type SectionName = "file" | "cut" | "bit" | "material" | "settings";
-type CornerEditMode = "select" | CornerReliefType;
-type NumericCamSetting = "finalDepth" | "stepDown" | "bitDiameter" | "feedRate" | "plungeRate" | "retractHeight" | "rapidFeed" | "rampLength" | "spindleRpm" | "fluteCount";
-type ExportMode = "combined" | "separate";
-type BitType = "straight" | "v" | "ball-nose" | "crown" | "drill" | "custom";
-
-type BitDefinition = {
-  id: string;
-  name: string;
-  type: BitType;
-  cuttingDiameter: number;
-  shankDiameter: number;
-  fluteLength: number;
-  overallLength: number;
-  fluteCount: number;
-  spindleRpm: number;
-  feedRate: number;
-  plungeRate: number;
-  vAngle: number;
-  tipDiameter: number;
-  notes: string;
-};
-
-type CalculatedToolpath = {
-  id: string;
-  name: string;
-  pathIds: string[];
-  paths: ToolPath[];
-  settings: CamSettings;
-  gcode: string;
-  estimatedMinutes: number;
-  passCount: number;
-};
-
-type SavedProject = {
-  version: 1;
-  savedAt: number;
-  fileName: string;
-  drawing: ParsedDrawing | null;
-  displayPaths: ToolPath[];
-  calculatedToolpaths: CalculatedToolpath[];
-  settings: CamSettings;
-  origin: MaterialOrigin;
-  materialWidth: number;
-  materialHeight: number;
-  materialThickness: number;
-  exportMode: ExportMode;
-  toolpathName: string;
-  view: "2d" | "3d";
-  bitLibrary?: BitDefinition[];
-  activeBitId?: string;
-};
+  assertCamOperationExportable,
+  buildCenterlineOperation,
+  isCamOperationStale,
+  validateCamOperation,
+} from "@/lib/cam/operations";
+import { createNewProject, settingsForBit } from "@/lib/project/defaults";
+import { deserializeProject, serializeProject } from "@/lib/project/migration";
+import { readCurrentProject, writeCurrentProject } from "@/lib/project/persistence";
+import type { ProjectMaterial, ProjectV2 } from "@/lib/project/types";
+import { importDxfToVectorDocument } from "@/lib/vector/dxf";
+import { exportVectorDocumentToSvg, importSvgToVectorDocument } from "@/lib/vector/svg";
+import { commitDocument, createId, type Vec2, type VectorDocument } from "@/lib/vector/types";
 
 type SaveStatus = "loading" | "saving" | "saved" | "error";
 
-const PROJECT_DB_NAME = "camee-projects";
-const PROJECT_STORE_NAME = "projects";
-const CURRENT_PROJECT_KEY = "current-project";
-
-const bitTypeLabels: Record<BitType, string> = {
-  straight: "ストレート",
-  v: "Vビット",
-  "ball-nose": "ボールノーズ",
-  crown: "クラウン",
-  drill: "ドリル",
-  custom: "カスタム",
-};
-
-const defaultCamSettings: CamSettings = {
-  finalDepth: 3,
-  stepDown: 1,
-  bitDiameter: 3,
-  toolName: "ストレート 3mm",
-  toolType: "straight",
-  spindleRpm: 18000,
-  fluteCount: 2,
-  feedRate: 1000,
-  plungeRate: 300,
-  retractHeight: 2,
-  rapidFeed: 2000,
-  rampEnabled: false,
-  rampLength: 12,
-};
-
-const defaultBitLibrary: BitDefinition[] = [
-  { id: "straight-3", name: "ストレート 3mm", type: "straight", cuttingDiameter: 3, shankDiameter: 3.175, fluteLength: 12, overallLength: 38, fluteCount: 2, spindleRpm: 18000, feedRate: 1000, plungeRate: 300, vAngle: 0, tipDiameter: 0, notes: "" },
-  { id: "v-60", name: "Vビット 60°", type: "v", cuttingDiameter: 12, shankDiameter: 3.175, fluteLength: 12, overallLength: 38, fluteCount: 2, spindleRpm: 18000, feedRate: 800, plungeRate: 250, vAngle: 60, tipDiameter: 0.2, notes: "" },
-  { id: "ball-3", name: "ボールノーズ 3mm", type: "ball-nose", cuttingDiameter: 3, shankDiameter: 3.175, fluteLength: 12, overallLength: 38, fluteCount: 2, spindleRpm: 18000, feedRate: 900, plungeRate: 250, vAngle: 0, tipDiameter: 0, notes: "" },
-  { id: "crown-6", name: "クラウン 6mm", type: "crown", cuttingDiameter: 6, shankDiameter: 6, fluteLength: 8, overallLength: 50, fluteCount: 2, spindleRpm: 16000, feedRate: 700, plungeRate: 200, vAngle: 0, tipDiameter: 0, notes: "" },
-];
-
-function settingsForBit(bit: BitDefinition): Pick<CamSettings, "bitDiameter" | "toolName" | "toolType" | "spindleRpm" | "fluteCount" | "feedRate" | "plungeRate"> {
-  return {
-    bitDiameter: bit.cuttingDiameter,
-    toolName: bit.name,
-    toolType: bit.type,
-    spindleRpm: bit.spindleRpm,
-    fluteCount: bit.fluteCount,
-    feedRate: bit.feedRate,
-    plungeRate: bit.plungeRate,
-  };
-}
-
-const materialOrigins: Array<{ id: Exclude<MaterialOrigin, "dxf">; label: string }> = [
-  { id: "upper-left", label: "左上" },
-  { id: "upper-center", label: "上中央" },
-  { id: "upper-right", label: "右上" },
-  { id: "center-left", label: "左中央" },
-  { id: "center", label: "中央" },
-  { id: "center-right", label: "右中央" },
-  { id: "lower-left", label: "左下" },
-  { id: "lower-center", label: "下中央" },
-  { id: "lower-right", label: "右下" },
-];
-
-const originLabels: Record<MaterialOrigin, string> = {
-  "upper-left": "材料の左上",
-  "upper-center": "材料の上中央",
-  "upper-right": "材料の右上",
-  "center-left": "材料の左中央",
-  center: "材料の中央",
-  "center-right": "材料の右中央",
-  "lower-left": "材料の左下",
-  "lower-center": "材料の下中央",
-  "lower-right": "材料の右下",
-  dxf: "DXF原点",
-};
-
-const toolButtons = [
-  { id: "file" as const, label: "DXFファイル", icon: FolderOpen },
-  { id: "cut" as const, label: "彫り込み", icon: Scissors },
-  { id: "bit" as const, label: "ビット", icon: Drill },
-  { id: "material" as const, label: "材料", icon: Box },
-  { id: "settings" as const, label: "出力設定", icon: Settings2 },
-];
-
-function IconButton({
-  label,
-  children,
-  active = false,
-  disabled = false,
-  onClick,
-}: {
-  label: string;
-  children: React.ReactNode;
-  active?: boolean;
-  disabled?: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      className={`icon-button${active ? " is-active" : ""}`}
-      type="button"
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  unit,
-  min = 0.01,
-  step = 0.1,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  unit: string;
-  min?: number;
-  step?: number;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label>
-      <span>{label}</span>
-      <span className="input-with-unit">
-        <input
-          type="number"
-          value={value}
-          min={min}
-          step={step}
-          inputMode="decimal"
-          onChange={(event) => onChange(Number(event.target.value))}
-        />
-        <b>{unit}</b>
-      </span>
-    </label>
-  );
-}
-
-function formatDuration(minutes: number) {
-  if (!minutes || !Number.isFinite(minutes)) return "--:--";
-  const totalSeconds = Math.max(1, Math.round(minutes * 60));
-  const hours = Math.floor(totalSeconds / 3600);
-  const mins = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  return hours > 0
-    ? `${hours}:${String(mins).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
-    : `${mins}:${String(seconds).padStart(2, "0")}`;
-}
-
-function clonePaths(paths: ToolPath[]) {
-  return paths.map((path) => ({
-    ...path,
-    points: path.points.map((point) => ({ ...point })),
-  }));
-}
-
 function safeFileName(value: string) {
   const printable = Array.from(value.trim(), (character) => character.charCodeAt(0) < 32 ? "_" : character).join("");
-  return printable.replace(/[<>:"/\\|?*]/g, "_") || "toolpath";
+  const clean = printable.replace(/[<>:"/\\|?*]/g, "_");
+  return clean || "cutpath-project";
 }
 
-function downloadText(content: string, fileName: string) {
-  const blob = new Blob([content], { type: "text/plain;charset=us-ascii" });
+function downloadText(content: string, fileName: string, type: string) {
+  const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = fileName;
   link.click();
-  URL.revokeObjectURL(url);
-}
-
-function openProjectDatabase() {
-  return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(PROJECT_DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(PROJECT_STORE_NAME)) {
-        request.result.createObjectStore(PROJECT_STORE_NAME);
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("保存領域を開けませんでした。"));
-  });
-}
-
-async function readSavedProject() {
-  const database = await openProjectDatabase();
-  try {
-    return await new Promise<SavedProject | null>((resolve, reject) => {
-      const transaction = database.transaction(PROJECT_STORE_NAME, "readonly");
-      const request = transaction.objectStore(PROJECT_STORE_NAME).get(CURRENT_PROJECT_KEY);
-      request.onsuccess = () => resolve((request.result as SavedProject | undefined) ?? null);
-      request.onerror = () => reject(request.error ?? new Error("保存データを読み込めませんでした。"));
-    });
-  } finally {
-    database.close();
-  }
-}
-
-async function writeSavedProject(project: SavedProject) {
-  const database = await openProjectDatabase();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(PROJECT_STORE_NAME, "readwrite");
-      transaction.objectStore(PROJECT_STORE_NAME).put(project, CURRENT_PROJECT_KEY);
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error ?? new Error("保存できませんでした。"));
-      transaction.onabort = () => reject(transaction.error ?? new Error("保存が中断されました。"));
-    });
-  } finally {
-    database.close();
-  }
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 export default function Home() {
+  const [initialProject] = useState<ProjectV2>(createNewProject);
+  const history = useEditorHistory(initialProject.document);
+  const [project, setProject] = useState<ProjectV2>(initialProject);
+  const [tool, setTool] = useState<EditorTool>("select");
   const [view, setView] = useState<"2d" | "3d">("2d");
-  const [activeSection, setActiveSection] = useState<SectionName>("file");
-  const [drawing, setDrawing] = useState<ParsedDrawing | null>(null);
-  const [fileName, setFileName] = useState("");
-  const [origin, setOrigin] = useState<MaterialOrigin>("lower-left");
-  const [materialWidth, setMaterialWidth] = useState(300);
-  const [materialHeight, setMaterialHeight] = useState(200);
-  const [materialThickness, setMaterialThickness] = useState(18);
-  const [isDragging, setIsDragging] = useState(false);
-  const [error, setError] = useState("");
-  const [displayPaths, setDisplayPaths] = useState<ToolPath[]>([]);
   const [selectedPathIds, setSelectedPathIds] = useState<string[]>([]);
-  const [calculatedToolpaths, setCalculatedToolpaths] = useState<CalculatedToolpath[]>([]);
-  const [toolpathName, setToolpathName] = useState("ツールパス 1");
-  const [editingToolpathId, setEditingToolpathId] = useState<string | null>(null);
-  const [exportMode, setExportMode] = useState<ExportMode>("combined");
-  const [storageReady, setStorageReady] = useState(false);
+  const [selectedNodes, setSelectedNodes] = useState<SelectedNodeRef[]>([]);
+  const [activeOperationId, setActiveOperationId] = useState<string | null>(null);
+  const [operationName, setOperationName] = useState("センターライン 1");
+  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [gridVisible, setGridVisible] = useState(true);
+  const [gridSizeMm, setGridSizeMm] = useState<1 | 5 | 10>(5);
+  const [cursor, setCursor] = useState<Vec2>({ x: 0, y: 0 });
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("loading");
-  const [savedAt, setSavedAt] = useState<number | null>(null);
-  const [cornerMode, setCornerMode] = useState<CornerEditMode>("select");
-  const [closeTolerance, setCloseTolerance] = useState(0.1);
-  const [pathNotice, setPathNotice] = useState("");
-  const [showClosePanel, setShowClosePanel] = useState(false);
-  const [editorRevision, setEditorRevision] = useState(0);
-  const [bitLibrary, setBitLibrary] = useState<BitDefinition[]>(() => defaultBitLibrary.map((bit) => ({ ...bit })));
-  const [activeBitId, setActiveBitId] = useState(defaultBitLibrary[0].id);
-  const [bitNotice, setBitNotice] = useState("");
-  const [isBitEditorOpen, setIsBitEditorOpen] = useState(false);
-  const [settings, setSettings] = useState<CamSettings>(defaultCamSettings);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const panelRef = useRef<HTMLElement>(null);
+  const [storageReady, setStorageReady] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
   const previewRef = useRef<PreviewHandle>(null);
-  const skipNextDocumentResetRef = useRef(false);
-  const saveSequenceRef = useRef(0);
-  const sectionRefs = useRef<Record<SectionName, HTMLElement | null>>({
-    file: null,
-    cut: null,
-    bit: null,
-    material: null,
-    settings: null,
-  });
+  const jsonInputRef = useRef<HTMLInputElement>(null);
+  const dxfInputRef = useRef<HTMLInputElement>(null);
+  const svgInputRef = useRef<HTMLInputElement>(null);
+
+  const replaceDocument = history.replace;
+  const loadProject = useCallback((loaded: ProjectV2) => {
+    setProject(loaded);
+    replaceDocument(loaded.document);
+    setSelectedPathIds(loaded.ui?.selectedPathIds ?? []);
+    setSelectedNodes([]);
+    setActiveOperationId(loaded.ui?.activeOperationId ?? null);
+    setView(loaded.ui?.view ?? "2d");
+    setError("");
+  }, [replaceDocument]);
 
   useEffect(() => {
     let active = true;
-    readSavedProject()
-      .then((saved) => {
-        if (!active || !saved || saved.version !== 1) return;
-        skipNextDocumentResetRef.current = true;
-        setFileName(saved.fileName);
-        setDrawing(saved.drawing);
-        setDisplayPaths(clonePaths(saved.displayPaths));
-        setCalculatedToolpaths(saved.calculatedToolpaths);
-        setSettings({ ...defaultCamSettings, ...saved.settings });
-        const restoredBits = saved.bitLibrary?.length ? saved.bitLibrary : defaultBitLibrary;
-        setBitLibrary(restoredBits.map((bit) => ({ ...bit })));
-        setActiveBitId(restoredBits.some((bit) => bit.id === saved.activeBitId) ? saved.activeBitId! : restoredBits[0].id);
-        setOrigin(saved.origin);
-        setMaterialWidth(saved.materialWidth);
-        setMaterialHeight(saved.materialHeight);
-        setMaterialThickness(saved.materialThickness);
-        setExportMode(saved.exportMode);
-        setToolpathName(saved.toolpathName);
-        setView(saved.view);
-        setSavedAt(saved.savedAt);
-      })
-      .catch(() => {
-        if (active) setSaveStatus("error");
-      })
-      .finally(() => {
-        if (!active) return;
-        if (!skipNextDocumentResetRef.current) skipNextDocumentResetRef.current = true;
-        setStorageReady(true);
-        setSaveStatus((current) => current === "error" ? current : "saved");
-      });
+    readCurrentProject()
+      .then((saved) => { if (active && saved) loadProject(saved); })
+      .catch((reason: unknown) => { if (active) { setError(reason instanceof Error ? reason.message : "保存データを読み込めませんでした。"); setSaveStatus("error"); } })
+      .finally(() => { if (active) { setStorageReady(true); setSaveStatus((status) => status === "error" ? status : "saved"); } });
     return () => { active = false; };
-  }, []);
+  }, [loadProject]);
 
-  const baseDisplayPaths = useMemo(
-    () => pathsForMaterial(drawing?.paths ?? [], origin, materialWidth, materialHeight),
-    [drawing, origin, materialWidth, materialHeight],
-  );
-  const boardBounds = useMemo(
-    () => getMaterialBounds(materialWidth, materialHeight, origin),
-    [materialWidth, materialHeight, origin],
-  );
-  const displayBounds = useMemo(() => getBounds(displayPaths), [displayPaths]);
-  const pathsOutsideMaterial = displayPaths.length > 0 && (
-    displayBounds.minX < boardBounds.minX - 0.001
-    || displayBounds.minY < boardBounds.minY - 0.001
-    || displayBounds.maxX > boardBounds.maxX + 0.001
-    || displayBounds.maxY > boardBounds.maxY + 0.001
-  );
+  const snapshot = useMemo<ProjectV2>(() => ({
+    ...project,
+    document: history.document,
+    ui: { view, selectedPathIds, activeOperationId },
+  }), [activeOperationId, history.document, project, selectedPathIds, view]);
 
-  useEffect(() => {
+  const save = useCallback(async () => {
     if (!storageReady) return;
-    if (skipNextDocumentResetRef.current) {
-      skipNextDocumentResetRef.current = false;
-      return;
-    }
-    // A file or origin change starts a fresh editing document.
-    setDisplayPaths(clonePaths(baseDisplayPaths));
-    setSelectedPathIds([]);
-    setCalculatedToolpaths([]);
-    setEditingToolpathId(null);
-    setToolpathName("ツールパス 1");
-    setCornerMode("select");
-    setPathNotice("");
-    setShowClosePanel(false);
-    setEditorRevision((current) => current + 1);
-  }, [baseDisplayPaths, storageReady]);
-  const selectedPaths = useMemo(
-    () => displayPaths.filter((path) => selectedPathIds.includes(path.id)),
-    [displayPaths, selectedPathIds],
-  );
-  const depths = useMemo(() => {
-    try {
-      return buildPassDepths(settings.finalDepth, settings.stepDown);
-    } catch {
-      return [];
-    }
-  }, [settings.finalDepth, settings.stepDown]);
-  const estimatedMinutes = useMemo(() => {
-    try {
-      return estimateMinutes(selectedPaths, settings);
-    } catch {
-      return 0;
-    }
-  }, [selectedPaths, settings]);
-  const activeBit = useMemo(
-    () => bitLibrary.find((bit) => bit.id === activeBitId) ?? bitLibrary[0],
-    [activeBitId, bitLibrary],
-  );
-
-  const selectBit = (id: string) => {
-    const bit = bitLibrary.find((item) => item.id === id);
-    if (!bit) return;
-    setActiveBitId(bit.id);
-    setSettings((current) => ({ ...current, ...settingsForBit(bit) }));
-    setBitNotice("");
-  };
-
-  const updateBitNumber = (key: "cuttingDiameter" | "shankDiameter" | "fluteLength" | "overallLength" | "fluteCount" | "spindleRpm" | "feedRate" | "plungeRate" | "vAngle" | "tipDiameter", value: number) => {
-    if (!activeBit) return;
-    setBitLibrary((current) => current.map((bit) => bit.id === activeBit.id ? { ...bit, [key]: value } : bit));
-    const settingKeys: Partial<Record<typeof key, NumericCamSetting>> = {
-      cuttingDiameter: "bitDiameter",
-      fluteCount: "fluteCount",
-      spindleRpm: "spindleRpm",
-      feedRate: "feedRate",
-      plungeRate: "plungeRate",
-    };
-    const settingKey = settingKeys[key];
-    if (settingKey) setSettings((current) => ({ ...current, [settingKey]: value }));
-    setBitNotice("");
-  };
-
-  const updateBitName = (name: string) => {
-    if (!activeBit) return;
-    setBitLibrary((current) => current.map((bit) => bit.id === activeBit.id ? { ...bit, name } : bit));
-    setSettings((current) => ({ ...current, toolName: name }));
-    setBitNotice("");
-  };
-
-  const updateBitType = (type: BitType) => {
-    if (!activeBit) return;
-    setBitLibrary((current) => current.map((bit) => bit.id === activeBit.id ? { ...bit, type } : bit));
-    setSettings((current) => ({ ...current, toolType: type }));
-    setBitNotice("");
-  };
-
-  const updateBitNotes = (notes: string) => {
-    if (!activeBit) return;
-    setBitLibrary((current) => current.map((bit) => bit.id === activeBit.id ? { ...bit, notes } : bit));
-    setBitNotice("");
-  };
-
-  const addBit = () => {
-    const source = activeBit ?? defaultBitLibrary[0];
-    const bit: BitDefinition = {
-      ...source,
-      id: crypto.randomUUID(),
-      name: `${bitTypeLabels[source.type]} 新規ビット`,
-    };
-    setBitLibrary((current) => [...current, bit]);
-    setActiveBitId(bit.id);
-    setSettings((current) => ({ ...current, ...settingsForBit(bit) }));
-    setBitNotice("");
-    setIsBitEditorOpen(true);
-  };
-
-  const deleteBit = () => {
-    if (!activeBit || bitLibrary.length <= 1) {
-      setBitNotice("ライブラリには1本以上のビットが必要です");
-      return;
-    }
-    const next = bitLibrary.filter((bit) => bit.id !== activeBit.id);
-    const replacement = next[0];
-    setBitLibrary(next);
-    setActiveBitId(replacement.id);
-    setSettings((current) => ({ ...current, ...settingsForBit(replacement) }));
-    setBitNotice("");
-  };
-
-  const projectSnapshot = useMemo<SavedProject>(() => ({
-    version: 1,
-    savedAt: 0,
-    fileName,
-    drawing,
-    displayPaths: clonePaths(displayPaths),
-    calculatedToolpaths,
-    settings: { ...settings },
-    origin,
-    materialWidth,
-    materialHeight,
-    materialThickness,
-    exportMode,
-    toolpathName,
-    view,
-    bitLibrary,
-    activeBitId,
-  }), [
-    activeBitId,
-    bitLibrary,
-    calculatedToolpaths,
-    displayPaths,
-    drawing,
-    exportMode,
-    fileName,
-    materialHeight,
-    materialThickness,
-    materialWidth,
-    origin,
-    settings,
-    toolpathName,
-    view,
-  ]);
-
-  const saveProject = useCallback(async () => {
-    if (!storageReady) return;
-    const sequence = saveSequenceRef.current + 1;
-    saveSequenceRef.current = sequence;
-    const nextSavedAt = Date.now();
     setSaveStatus("saving");
     try {
-      await writeSavedProject({ ...projectSnapshot, savedAt: nextSavedAt });
-      if (saveSequenceRef.current !== sequence) return;
-      setSavedAt(nextSavedAt);
+      const savedAt = Date.now();
+      await writeCurrentProject({ ...snapshot, savedAt });
       setSaveStatus("saved");
-    } catch {
-      if (saveSequenceRef.current === sequence) setSaveStatus("error");
+    } catch (reason) {
+      setSaveStatus("error");
+      setError(reason instanceof Error ? reason.message : "保存できませんでした。");
     }
-  }, [projectSnapshot, storageReady]);
-
-  const saveBitToLibrary = () => {
-    setBitNotice("ビットライブラリに保存しました");
-    void saveProject();
-    setIsBitEditorOpen(false);
-  };
+  }, [snapshot, storageReady]);
 
   useEffect(() => {
     if (!storageReady) return;
-    const timer = window.setTimeout(() => { void saveProject(); }, 350);
+    const timer = window.setTimeout(() => { void save(); }, 400);
     return () => window.clearTimeout(timer);
-  }, [projectSnapshot, saveProject, storageReady]);
+  }, [save, storageReady]);
 
-  useEffect(() => {
-    if (!editingToolpathId || view !== "2d") return;
-    const job = calculatedToolpaths.find((toolpath) => toolpath.id === editingToolpathId);
-    if (!job) return;
-    const frame = requestAnimationFrame(() => previewRef.current?.selectPaths?.(job.pathIds));
-    return () => cancelAnimationFrame(frame);
-  }, [calculatedToolpaths, editingToolpathId, view]);
+  const materialBounds = useMemo(() => getMaterialBounds(project.material.width, project.material.height, project.material.origin), [project.material]);
+  const activeOperation = project.camOperations.find((operation) => operation.id === activeOperationId) ?? null;
+  const operationIssues = useMemo(() => activeOperation ? validateCamOperation(activeOperation, history.document, project.material) : [], [activeOperation, history.document, project.material]);
+  const previewPaths = activeOperation && !isCamOperationStale(activeOperation, history.document) ? activeOperation.generatedToolPaths : [];
+  const previewDepths = activeOperation ? buildPassDepths(activeOperation.settings.finalDepth, activeOperation.settings.stepDown) : [];
 
-  const updateSetting = (key: NumericCamSetting, value: number) => {
-    setSettings((current) => ({ ...current, [key]: value }));
-  };
-
-  const changeOrigin = (value: MaterialOrigin) => {
-    setOrigin(value);
-  };
-
-  const loadFile = async (file?: File) => {
-    if (!file) return;
-    setError("");
-    if (!file.name.toLowerCase().endsWith(".dxf")) {
-      setError("DXFファイル（.dxf）を選択してください。");
-      return;
-    }
-    if (file.size > 25 * 1024 * 1024) {
-      setError("ファイルが大きすぎます。25MB以下のDXFを試してください。");
-      return;
-    }
-    try {
-      const parsed = parseDxfText(await file.text());
-      setDrawing(parsed);
-      setFileName(file.name);
-      setMaterialWidth((current) => Math.max(current, Math.ceil(parsed.bounds.width)));
-      setMaterialHeight((current) => Math.max(current, Math.ceil(parsed.bounds.height)));
-      setActiveSection("cut");
-    } catch (caught) {
-      setDrawing(null);
-      setFileName("");
-      setError(caught instanceof Error ? caught.message : "DXFの読み込みに失敗しました。");
-    }
-  };
-
-  const clearFile = () => {
-    setDrawing(null);
-    setFileName("");
-    setError("");
-    if (inputRef.current) inputRef.current.value = "";
-  };
-
-  const resetPathEdits = () => {
-    setDisplayPaths(clonePaths(baseDisplayPaths));
-    setSelectedPathIds([]);
-    setCornerMode("select");
-    setPathNotice("");
-    setShowClosePanel(false);
-    setEditorRevision((current) => current + 1);
-  };
-
-  const connectAndClosePaths = () => {
-    setError("");
-    try {
-      const result = closeOpenPaths(displayPaths, closeTolerance);
-      if (!result.joinedCount && !result.closedCount) {
-        setPathNotice("許容値内に接続できる端点はありません");
-        return;
-      }
-      setDisplayPaths(result.paths);
-      setSelectedPathIds([]);
-      setCornerMode("select");
-      setEditorRevision((current) => current + 1);
-      setPathNotice(`接続 ${result.joinedCount}・閉合 ${result.closedCount}`);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "パスを閉じられませんでした。");
-    }
-  };
-
-  const handleSelectionChange = useCallback((pathIds: string[]) => {
-    setSelectedPathIds(pathIds);
-    if (pathIds.length !== 1) setCornerMode("select");
-  }, []);
-
-  const goToSection = (section: SectionName) => {
-    setActiveSection(section);
-    sectionRefs.current[section]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const selectBit = (id: string) => {
+    const bit = project.tools.library.find((item) => item.id === id);
+    if (!bit) return;
+    setProject((current) => ({
+      ...current,
+      tools: { ...current.tools, activeToolId: id },
+      camDraft: {
+        ...current.camDraft,
+        ...settingsForBit(bit),
+        finalDepth: current.camDraft.finalDepth,
+        stepDown: current.camDraft.stepDown,
+        retractHeight: current.camDraft.retractHeight,
+        rapidFeed: current.camDraft.rapidFeed,
+        rampEnabled: current.camDraft.rampEnabled,
+        rampLength: current.camDraft.rampLength,
+      },
+    }));
   };
 
   const calculate = () => {
     setError("");
-    if (!drawing) {
-      setError("先にDXFファイルを読み込んでください。");
-      goToSection("file");
-      return;
-    }
-    if (materialWidth <= 0 || materialHeight <= 0 || materialThickness <= 0) {
-      setError("材料のW・H・Dは0より大きい値にしてください。");
-      goToSection("material");
-      return;
-    }
-    if (!selectedPaths.length) {
-      setError("加工するパスを2D画面で選択してください。");
-      setView("2d");
-      return;
-    }
-    const name = toolpathName.trim();
-    if (!name) {
-      setError("ツールパス名を入力してください。");
-      return;
-    }
-    if (calculatedToolpaths.some((toolpath) => toolpath.name === name && toolpath.id !== editingToolpathId)) {
-      setError("同じツールパス名があります。別の名前を入力してください。");
-      return;
-    }
     try {
-      const paths = clonePaths(selectedPaths);
-      const output = generateGcode(paths, settings, `${fileName} / ${name}`);
-      const toolpath: CalculatedToolpath = {
-        id: editingToolpathId ?? crypto.randomUUID(),
-        name,
-        pathIds: paths.map((path) => path.id),
-        paths,
-        settings: { ...settings },
-        gcode: output,
-        estimatedMinutes: estimateMinutes(paths, settings),
-        passCount: buildPassDepths(settings.finalDepth, settings.stepDown).length,
-      };
-      setCalculatedToolpaths((current) => editingToolpathId
-        ? current.map((item) => item.id === editingToolpathId ? toolpath : item)
-        : [...current, toolpath]);
-      setEditingToolpathId(null);
-      setToolpathName(`ツールパス ${calculatedToolpaths.length + (editingToolpathId ? 1 : 2)}`);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "ツールパスを作成できませんでした。");
+      const operation = buildCenterlineOperation(history.document, selectedPathIds, project.camDraft, { id: createId("cam"), name: operationName });
+      setProject((current) => ({ ...current, camOperations: [...current.camOperations, operation] }));
+      setActiveOperationId(operation.id);
+      setView("3d");
+      setOperationName(`センターライン ${project.camOperations.length + 2}`);
+      setNotice("ツールパスを計算しました。3Dで深さと進入を確認してください。");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "ツールパスを計算できませんでした。");
     }
   };
 
-  const editToolpath = (toolpath: CalculatedToolpath) => {
-    setEditingToolpathId(toolpath.id);
-    setToolpathName(toolpath.name);
-    setSettings({ ...toolpath.settings });
-    setSelectedPathIds([...toolpath.pathIds]);
-    setCornerMode("select");
-    setView("2d");
+  const exportGcode = () => {
+    if (!activeOperation) return;
+    setError("");
+    try {
+      assertCamOperationExportable(activeOperation, history.document, project.material);
+      const gcode = generateGcode(activeOperation.generatedToolPaths, activeOperation.settings, `${project.name} / ${activeOperation.name}`);
+      downloadText(gcode, `${safeFileName(project.name)}-${safeFileName(activeOperation.name)}.gcode`, "text/plain;charset=us-ascii");
+      setNotice("G-codeを書き出しました。実機の前にDry Runしてください。");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "G-codeを書き出せませんでした。");
+    }
+  };
+
+  const handleFile = async (file: File | undefined, type: "json" | "dxf" | "svg") => {
+    if (!file) return;
+    setError("");
+    try {
+      const source = await file.text();
+      if (type === "json") {
+        loadProject(deserializeProject(source));
+        setNotice("CutPath Projectを読み込みました。");
+      } else if (type === "dxf") {
+        const imported = importDxfToVectorDocument(source);
+        history.commit(commitDocument(history.document, imported.document.paths, imported.document.pathOrder));
+        setProject((current) => ({ ...current, name: file.name.replace(/\.dxf$/i, "") }));
+        setSelectedPathIds(imported.document.pathOrder);
+        setNotice(`${imported.entityCount} DXF entityをVectorDocumentへ読み込みました。${imported.unitWarning ?? ""}`);
+        setView("2d");
+      } else {
+        const imported = importSvgToVectorDocument(source);
+        history.commit(commitDocument(history.document, imported.paths, imported.pathOrder));
+        setProject((current) => ({ ...current, name: file.name.replace(/\.svg$/i, "") }));
+        setSelectedPathIds(imported.pathOrder);
+        setNotice("SVGを編集可能なLine/Cubic pathへ読み込みました。");
+        setView("2d");
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "ファイルを読み込めませんでした。");
+    }
+  };
+
+  const newProject = () => {
+    const next = createNewProject();
+    loadProject(next);
+    setTool("select");
+    setOperationName("センターライン 1");
+    setNotice("新規Projectを作成しました。");
+  };
+
+  const commitEditorDocument = (document: VectorDocument) => {
+    history.commit(document);
+    setNotice("");
     setError("");
   };
 
-  const cancelToolpathEdit = () => {
-    setEditingToolpathId(null);
-    setToolpathName(`ツールパス ${calculatedToolpaths.length + 1}`);
-  };
-
-  const deleteToolpath = (id: string) => {
-    setCalculatedToolpaths((current) => current.filter((toolpath) => toolpath.id !== id));
-    if (editingToolpathId === id) cancelToolpathEdit();
-  };
-
-  const downloadGcode = () => {
-    if (!calculatedToolpaths.length) return;
-    const baseName = safeFileName(fileName.replace(/\.dxf$/i, "") || "camee");
-    if (exportMode === "combined") {
-      const output = calculatedToolpaths.map((toolpath, index) => [
-        `; ===== TOOLPATH ${index + 1}: ${toolpath.name.replace(/[^\x20-\x7e]/g, "_")} =====`,
-        toolpath.gcode.trim(),
-      ].join("\n")).join("\n\n");
-      downloadText(`${output}\n`, `${baseName}-all.gcode`);
-      return;
-    }
-    calculatedToolpaths.forEach((toolpath, index) => {
-      downloadText(toolpath.gcode, `${baseName}-${index + 1}-${safeFileName(toolpath.name)}.gcode`);
-    });
-  };
-
   return (
-    <main className="cam-shell">
-      <header className="topbar">
-        <div className="brand" aria-label="CAMEE">
-          <span className="brand-mark">C</span>
-          <span>CAMEE</span>
-          <span className="version">BETA</span>
-        </div>
-        <div className="top-actions" aria-label="ファイル操作">
-          <IconButton label="DXFを開く" onClick={() => inputRef.current?.click()}>
-            <FolderOpen size={19} />
-          </IconButton>
-          <IconButton label="プロジェクトを保存" disabled={!storageReady || saveStatus === "saving"} onClick={() => { void saveProject(); }}>
-            {saveStatus === "saved" ? <Check size={18} /> : <Save size={18} />}
-          </IconButton>
-          <span className={`save-status is-${saveStatus}`}>
-            {saveStatus === "loading" ? "読込中" : saveStatus === "saving" ? "保存中" : saveStatus === "error" ? "保存エラー" : savedAt ? "保存済み" : "自動保存"}
-          </span>
-          {fileName && <span className="top-file-name">{fileName}</span>}
-        </div>
-        <button className="export-button" type="button" disabled={!calculatedToolpaths.length} onClick={downloadGcode}>
-          <Download size={17} />
-          <span>G-code</span>
-        </button>
-      </header>
+    <main className="cutpath-shell">
+      <TopBar
+        projectName={project.name}
+        saveStatus={saveStatus}
+        view={view}
+        canUndo={history.canUndo}
+        canRedo={history.canRedo}
+        onNameChange={(name) => setProject((current) => ({ ...current, name }))}
+        onNew={newProject}
+        onImport={() => jsonInputRef.current?.click()}
+        onExport={() => downloadText(serializeProject(snapshot), `${safeFileName(project.name)}.cutpath.json`, "application/json;charset=utf-8")}
+        onDxfImport={() => dxfInputRef.current?.click()}
+        onSvgImport={() => svgInputRef.current?.click()}
+        onSvgExport={() => {
+          try { downloadText(exportVectorDocumentToSvg(history.document), `${safeFileName(project.name)}.svg`, "image/svg+xml;charset=utf-8"); }
+          catch (reason) { setError(reason instanceof Error ? reason.message : "SVGを書き出せませんでした。"); }
+        }}
+        onSave={() => { void save(); }}
+        onUndo={history.undo}
+        onRedo={history.redo}
+        onViewChange={setView}
+      />
+      <input ref={jsonInputRef} type="file" accept=".json,application/json" hidden onChange={(event) => { void handleFile(event.target.files?.[0], "json"); event.target.value = ""; }} />
+      <input ref={dxfInputRef} type="file" accept=".dxf,application/dxf" hidden onChange={(event) => { void handleFile(event.target.files?.[0], "dxf"); event.target.value = ""; }} />
+      <input ref={svgInputRef} type="file" accept=".svg,image/svg+xml" hidden onChange={(event) => { void handleFile(event.target.files?.[0], "svg"); event.target.value = ""; }} />
 
-      <aside className="tool-rail" aria-label="加工ツール">
-        {toolButtons.map(({ id, label, icon: Icon }) => (
-          <IconButton key={id} label={label} active={activeSection === id} onClick={() => goToSection(id)}>
-            <Icon size={20} />
-          </IconButton>
-        ))}
-      </aside>
+      <ToolBar activeTool={tool} onChange={(nextTool) => { setTool(nextTool); if (nextTool !== "direct") setSelectedNodes([]); setView("2d"); }} />
 
-      <aside className="settings-panel" ref={panelRef}>
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".dxf,application/dxf"
-          hidden
-          onChange={(event) => loadFile(event.target.files?.[0])}
-        />
-
-        {error && (
-          <div className="alert" role="alert">
-            <CircleAlert size={17} />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <section className="panel-section file-section" ref={(node) => { sectionRefs.current.file = node; }}>
-          <div className="section-heading">
-            <span className="step-number">1</span>
-            <div><h2>DXFファイル</h2><p>加工する図面を読み込む</p></div>
-          </div>
-          {drawing ? (
-            <div className="file-card">
-              <FileType2 size={22} />
-              <div>
-                <strong>{fileName}</strong>
-                <span>{displayBounds.width.toFixed(1)} × {displayBounds.height.toFixed(1)} mm · {drawing.paths.length} パス</span>
-              </div>
-              <IconButton label="ファイルを外す" onClick={clearFile}><Trash2 size={17} /></IconButton>
-            </div>
-          ) : (
-            <button
-              className={`drop-zone${isDragging ? " is-dragging" : ""}`}
-              type="button"
-              onClick={() => inputRef.current?.click()}
-              onDragEnter={(event) => { event.preventDefault(); setIsDragging(true); }}
-              onDragOver={(event) => event.preventDefault()}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={(event) => {
-                event.preventDefault();
-                setIsDragging(false);
-                loadFile(event.dataTransfer.files[0]);
-              }}
-            >
-              <Upload size={22} />
-              <span>ファイルを選択</span>
-              <small>またはここにドロップ</small>
-            </button>
-          )}
-          {drawing?.unitWarning && <p className="field-note"><Info size={13} /> {drawing.unitWarning}</p>}
-          {!!drawing?.unsupportedTypes.length && <p className="field-note"><Info size={13} /> 対象外: {drawing.unsupportedTypes.join(", ")}</p>}
-        </section>
-
-        <section className="panel-section" ref={(node) => { sectionRefs.current.cut = node; }}>
-          <div className="section-heading">
-            <span className="step-number">2</span>
-            <div><h2>彫り込み</h2><p>DXFの線の中心を加工</p></div>
-          </div>
-          <div className="field-grid">
-            <NumberField label="最終深さ" value={settings.finalDepth} unit="mm" onChange={(value) => updateSetting("finalDepth", value)} />
-            <NumberField label="1回の深さ" value={settings.stepDown} unit="mm" onChange={(value) => updateSetting("stepDown", value)} />
-          </div>
-          <div className="pass-summary">
-            <Layers3 size={17} /><span>加工回数</span><strong>{depths.length || "-"} パス</strong>
-          </div>
-          <label className="toggle-row">
-            <span className="toggle-label"><TrendingDown size={16} />ランプ進入</span>
-            <input
-              type="checkbox"
-              checked={settings.rampEnabled}
-              onChange={(event) => {
-                setSettings((current) => ({ ...current, rampEnabled: event.target.checked }));
-              }}
-            />
-            <span className="toggle-control" aria-hidden="true" />
-          </label>
-          {settings.rampEnabled && (
-            <div className="single-field">
-              <NumberField label="ランプ長さ" value={settings.rampLength} unit="mm" onChange={(value) => updateSetting("rampLength", value)} />
-            </div>
-          )}
-        </section>
-
-        <section className="panel-section" ref={(node) => { sectionRefs.current.bit = node; }}>
-          <div className="section-heading">
-            <span className="step-number">3</span>
-            <div><h2>ビット</h2><p>{activeBit ? bitTypeLabels[activeBit.type] : "ビットを選択"}</p></div>
-          </div>
-          {activeBit && (
-            <div className="bit-compact-card">
-              <label className="select-field">
-                <span>登録ビット</span>
-                <select value={activeBit.id} onChange={(event) => selectBit(event.target.value)}>
-                  {bitLibrary.map((bit) => <option key={bit.id} value={bit.id}>{bit.name}</option>)}
-                </select>
-              </label>
-              <div className="bit-compact-details">
-                <span>{bitTypeLabels[activeBit.type]}</span>
-                <span>Ø{activeBit.cuttingDiameter} mm</span>
-                <span>{activeBit.feedRate} mm/min</span>
-                <span>{activeBit.spindleRpm} rpm</span>
-              </div>
-              <div className="bit-compact-actions">
-                <IconButton label="ビットを編集" onClick={() => setIsBitEditorOpen(true)}><Pencil size={17} /></IconButton>
-                <IconButton label="新しいビットを追加" onClick={addBit}><Plus size={18} /></IconButton>
-              </div>
-            </div>
-          )}
-        </section>
-
-        <section className="panel-section" ref={(node) => { sectionRefs.current.material = node; }}>
-          <div className="section-heading">
-            <span className="step-number">4</span>
-            <div><h2>材料</h2><p>サイズとXY原点</p></div>
-          </div>
-          <div className="field-grid is-three">
-            <NumberField label="W 幅" value={materialWidth} unit="mm" onChange={setMaterialWidth} />
-            <NumberField label="H 高さ" value={materialHeight} unit="mm" onChange={setMaterialHeight} />
-            <NumberField label="D 厚さ" value={materialThickness} unit="mm" onChange={setMaterialThickness} />
-          </div>
-          <div className="origin-setting">
-            <span className="origin-label"><Crosshair size={14} />XY原点</span>
-            <div className="origin-grid" role="group" aria-label="材料上のXY原点">
-              {materialOrigins.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  className={origin === option.id ? "is-active" : ""}
-                  aria-label={option.label}
-                  title={option.label}
-                  onClick={() => changeOrigin(option.id)}
-                >
-                  <span />
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              className={`dxf-origin-button${origin === "dxf" ? " is-active" : ""}`}
-              onClick={() => changeOrigin("dxf")}
-            >
-              <Crosshair size={14} />
-              <span>DXF原点</span>
-            </button>
-          </div>
-          {pathsOutsideMaterial && <p className="field-note material-warning"><CircleAlert size={13} /> 材料の外側にパスがあります</p>}
-          {settings.finalDepth > materialThickness && <p className="field-note material-warning"><CircleAlert size={13} /> 加工深さが材料Dを超えています</p>}
-          <p className="field-note"><Info size={13} /> Z0は材料の上面</p>
-        </section>
-
-        <section className="panel-section" ref={(node) => { sectionRefs.current.settings = node; }}>
-          <div className="section-heading">
-            <span className="step-number">5</span>
-            <div><h2>出力設定</h2><p>GORDIX6 ポスト</p></div>
-          </div>
-          <div className="origin-summary"><Crosshair size={15} /><span>XY原点</span><strong>{originLabels[origin]}</strong></div>
-          <p className="field-note"><Ruler size={13} /> mm・絶対座標・退避高さ2mm・主軸は手動</p>
-        </section>
-
-        <div className="calculate-area">
-          <label className="toolpath-name-field">
-            <span>ツールパス名</span>
-            <input value={toolpathName} maxLength={60} onChange={(event) => setToolpathName(event.target.value)} />
-          </label>
-          <div className="calculate-selection"><MousePointer2 size={14} /><span>{selectedPathIds.length} パスを対象</span></div>
-          <button className={`calculate-button${editingToolpathId ? " is-editing" : ""}`} type="button" onClick={calculate}>
-            {editingToolpathId ? <Check size={18} /> : <Play size={18} fill="currentColor" />}
-            <span>{editingToolpathId ? "ツールパスを更新" : "ツールパスを計算"}</span>
-          </button>
-          {editingToolpathId && (
-            <button className="cancel-edit-button" type="button" onClick={cancelToolpathEdit}>編集をキャンセル</button>
-          )}
-        </div>
-      </aside>
-
-      {isBitEditorOpen && activeBit && (
-        <div className="bit-editor-overlay" role="presentation" onPointerDown={() => setIsBitEditorOpen(false)}>
-          <section
-            className="bit-editor-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label="ビットの編集"
-            onPointerDown={(event) => event.stopPropagation()}
-          >
-            <div className="bit-editor-header">
-              <div><Drill size={18} /><h2>ビットを編集</h2></div>
-              <IconButton label="ビット編集を閉じる" onClick={() => setIsBitEditorOpen(false)}><X size={18} /></IconButton>
-            </div>
-            <div className="bit-editor-body">
-              <div className="bit-library-picker">
-                <label className="select-field">
-                  <span>登録ビット</span>
-                  <select value={activeBit.id} onChange={(event) => selectBit(event.target.value)}>
-                    {bitLibrary.map((bit) => <option key={bit.id} value={bit.id}>{bit.name}</option>)}
-                  </select>
-                </label>
-                <IconButton label="新しいビットを追加" onClick={addBit}><Plus size={17} /></IconButton>
-                <IconButton label="選択中のビットを削除" onClick={deleteBit}><Trash2 size={16} /></IconButton>
-              </div>
-              <label className="bit-name-field">
-                <span>ビット名</span>
-                <input value={activeBit.name} maxLength={60} onChange={(event) => updateBitName(event.target.value)} />
-              </label>
-              <label className="select-field bit-type-field">
-                <span>種類</span>
-                <select value={activeBit.type} onChange={(event) => updateBitType(event.target.value as BitType)}>
-                  {(Object.keys(bitTypeLabels) as BitType[]).map((type) => <option key={type} value={type}>{bitTypeLabels[type]}</option>)}
-                </select>
-              </label>
-              <div className="field-grid is-three bit-dimensions">
-                <NumberField label={activeBit.type === "v" ? "基準径" : "刃径"} value={activeBit.cuttingDiameter} unit="mm" onChange={(value) => updateBitNumber("cuttingDiameter", value)} />
-                <NumberField label="シャンク径" value={activeBit.shankDiameter} unit="mm" onChange={(value) => updateBitNumber("shankDiameter", value)} />
-                <NumberField label="刃長" value={activeBit.fluteLength} unit="mm" onChange={(value) => updateBitNumber("fluteLength", value)} />
-                <NumberField label="全長" value={activeBit.overallLength} unit="mm" onChange={(value) => updateBitNumber("overallLength", value)} />
-                <NumberField label="刃数" value={activeBit.fluteCount} unit="枚" min={1} step={1} onChange={(value) => updateBitNumber("fluteCount", value)} />
-                <NumberField label="主軸回転数" value={activeBit.spindleRpm} unit="rpm" min={1} step={500} onChange={(value) => updateBitNumber("spindleRpm", value)} />
-              </div>
-              {activeBit.type === "v" && (
-                <div className="field-grid bit-v-fields">
-                  <NumberField label="刃先角度" value={activeBit.vAngle} unit="deg" min={1} step={1} onChange={(value) => updateBitNumber("vAngle", value)} />
-                  <NumberField label="先端径" value={activeBit.tipDiameter} unit="mm" min={0} step={0.1} onChange={(value) => updateBitNumber("tipDiameter", value)} />
-                </div>
-              )}
-              <div className="field-grid bit-cutting-fields">
-                <NumberField label="送り速度" value={activeBit.feedRate} unit="mm/min" min={1} step={50} onChange={(value) => updateBitNumber("feedRate", value)} />
-                <NumberField label="切り込み速度" value={activeBit.plungeRate} unit="mm/min" min={1} step={50} onChange={(value) => updateBitNumber("plungeRate", value)} />
-              </div>
-              <label className="bit-notes-field">
-                <span>メモ</span>
-                <textarea value={activeBit.notes} rows={3} maxLength={240} onChange={(event) => updateBitNotes(event.target.value)} />
-              </label>
-              {bitNotice && <p className="field-note path-notice"><Check size={13} /> {bitNotice}</p>}
-            </div>
-            <div className="bit-editor-footer">
-              <button type="button" className="cancel-edit-button" onClick={() => setIsBitEditorOpen(false)}>キャンセル</button>
-              <button type="button" className="bit-save-button" onClick={saveBitToLibrary}>
-                <Save size={16} /><span>保存</span>
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
-
-      <section className="workspace" aria-label="プレビュー">
-        <div className="view-switch" aria-label="表示切り替え">
-          <button type="button" className={view === "2d" ? "is-active" : ""} onClick={() => setView("2d")}><Grid3X3 size={16} /> 2D</button>
-          <button type="button" className={view === "3d" ? "is-active" : ""} onClick={() => { setView("3d"); setShowClosePanel(false); }}><Rotate3d size={17} /> 3D</button>
-        </div>
-
-        {view === "2d" && drawing && (
-          <div className="edit-tools" aria-label="2D編集ツール">
-            <IconButton label="パス・ウィンドウ選択" active={cornerMode === "select"} onClick={() => setCornerMode("select")}><MousePointer2 size={18} /></IconButton>
-            <IconButton label="ドッグボーンをコーナーへ追加" active={cornerMode === "dogbone"} disabled={selectedPathIds.length !== 1} onClick={() => setCornerMode("dogbone")}><CircleDot size={18} /></IconButton>
-            <IconButton label="H型フィレットをコーナーへ追加" active={cornerMode === "tbone"} disabled={selectedPathIds.length !== 1} onClick={() => setCornerMode("tbone")}><UnfoldHorizontal size={18} /></IconButton>
-            <IconButton label="選択パスを10%縮小" disabled={!selectedPathIds.length} onClick={() => previewRef.current?.scaleSelection?.(0.9)}><Shrink size={18} /></IconButton>
-            <IconButton label="選択パスを10%拡大" disabled={!selectedPathIds.length} onClick={() => previewRef.current?.scaleSelection?.(1.1)}><Expand size={18} /></IconButton>
-            <IconButton label="選択パスを左へ15度回転" disabled={!selectedPathIds.length} onClick={() => previewRef.current?.rotateSelection?.(-15)}><RotateCcw size={18} /></IconButton>
-            <IconButton label="選択パスを右へ15度回転" disabled={!selectedPathIds.length} onClick={() => previewRef.current?.rotateSelection?.(15)}><RotateCw size={18} /></IconButton>
-            <IconButton label="パスの接続・閉合設定" active={showClosePanel} onClick={() => setShowClosePanel((current) => !current)}><Link2 size={18} /></IconButton>
-            <IconButton label="2D編集をリセット" onClick={resetPathEdits}><Undo2 size={18} /></IconButton>
-          </div>
-        )}
-
-        {view === "2d" && drawing && showClosePanel && (
-          <div className="close-path-popover" role="dialog" aria-label="パスの接続・閉合設定">
-            <div className="close-panel-heading"><Link2 size={16} /><strong>パスの接続・閉合</strong></div>
-            <NumberField label="接続許容値" value={closeTolerance} unit="mm" min={0} step={0.01} onChange={setCloseTolerance} />
-            <button type="button" className="path-action-button" disabled={!displayPaths.length} onClick={connectAndClosePaths}>
-              <Link2 size={17} />
-              <span>接続・閉じる</span>
-            </button>
-            {pathNotice && <p className="field-note path-notice"><Check size={13} /> {pathNotice}</p>}
-          </div>
-        )}
-
+      <section className="editor-workspace" aria-label={view === "2d" ? "ベクター編集Canvas" : "3DツールパスPreview"}>
         {view === "2d" ? (
-          <ToolpathEditor2D
-            key={`${fileName}-${origin}-${editorRevision}`}
+          <VectorEditor2D
             ref={previewRef}
-            paths={displayPaths}
-            boardBounds={boardBounds}
-            bitDiameter={settings.bitDiameter}
-            cornerMode={cornerMode}
-            onSelectionChange={handleSelectionChange}
-            onPathsChange={(paths) => {
-              setDisplayPaths(paths);
-              setPathNotice("");
-            }}
+            document={history.document}
+            materialBounds={materialBounds}
+            tool={tool}
+            selectedPathIds={selectedPathIds}
+            selectedNodes={selectedNodes}
+            snapEnabled={snapEnabled}
+            gridVisible={gridVisible}
+            gridSizeMm={gridSizeMm}
+            onToolChange={setTool}
+            onDocumentCommit={commitEditorDocument}
+            onSelectionChange={setSelectedPathIds}
+            onNodeSelectionChange={setSelectedNodes}
+            onCursorPosition={setCursor}
+            onUndo={history.undo}
+            onRedo={history.redo}
           />
         ) : (
           <ToolpathPreview
             ref={previewRef}
-            paths={displayPaths}
-            depths={depths}
-            bitDiameter={settings.bitDiameter}
-            materialBounds={boardBounds}
-            materialThickness={materialThickness}
+            paths={previewPaths}
+            depths={previewDepths}
+            bitDiameter={activeOperation?.settings.bitDiameter ?? project.camDraft.bitDiameter}
+            materialBounds={materialBounds}
+            materialThickness={project.material.thickness}
             mode="3d"
-            rampEnabled={settings.rampEnabled}
-            rampLength={settings.rampLength}
+            rampEnabled={activeOperation?.settings.rampEnabled}
+            rampLength={activeOperation?.settings.rampLength}
           />
         )}
-        <div className="zoom-tools" aria-label="プレビュー操作">
-          <IconButton label="拡大" onClick={() => previewRef.current?.zoomIn()}><ZoomIn size={18} /></IconButton>
-          <IconButton label="縮小" onClick={() => previewRef.current?.zoomOut()}><ZoomOut size={18} /></IconButton>
-          <IconButton label="全体表示" onClick={() => previewRef.current?.fit()}><Maximize2 size={18} /></IconButton>
+        <div className="canvas-controls">
+          <button type="button" onClick={() => previewRef.current?.zoomIn()} aria-label="拡大"><ZoomIn size={17} /></button>
+          <button type="button" onClick={() => previewRef.current?.zoomOut()} aria-label="縮小"><ZoomOut size={17} /></button>
+          <button type="button" onClick={() => previewRef.current?.fit()} aria-label="全体表示"><Maximize2 size={17} /></button>
         </div>
-
-        <footer className="statusbar">
-          <span><i className="status-dot" /> GORDIX6</span>
-          <span>原点: {originLabels[origin]}</span>
-          <span>単位: mm</span>
-          {!!selectedPathIds.length && <span>{cornerMode === "select" ? `${selectedPathIds.length} パス選択` : cornerMode === "dogbone" ? "ドッグボーン" : "H型フィレット"}</span>}
-          <span className="status-spacer" />
-          <span>パス {displayPaths.length} × {depths.length}</span>
-          <span>加工時間 {formatDuration(estimatedMinutes)}</span>
-        </footer>
+        {view === "3d" && !previewPaths.length && <div className="preview-empty">{activeOperation && isCamOperationStale(activeOperation, history.document) ? "図形が変更されています。ツールパスを再計算してください。" : "センターラインCAMを計算すると3D Previewを表示します。"}</div>}
+        {(error || notice) && <div className={`app-notice${error ? " is-error" : ""}`} role={error ? "alert" : "status"}>{error || notice}<button type="button" onClick={() => { setError(""); setNotice(""); }}>×</button></div>}
       </section>
 
-      <aside className="toolpath-panel" aria-label="計算済みツールパス">
-        <div className="toolpath-panel-heading">
-          <div><Layers3 size={17} /><h2>ツールパス</h2></div>
-          <span>{calculatedToolpaths.length}</span>
-        </div>
-
-        <div className="export-mode" role="group" aria-label="G-code書き出し方式">
-          <button
-            type="button"
-            className={exportMode === "combined" ? "is-active" : ""}
-            onClick={() => setExportMode("combined")}
-          >
-            <Files size={16} />
-            <span>一括</span>
-          </button>
-          <button
-            type="button"
-            className={exportMode === "separate" ? "is-active" : ""}
-            onClick={() => setExportMode("separate")}
-          >
-            <FileDown size={16} />
-            <span>個別</span>
-          </button>
-        </div>
-
-        <div className="toolpath-list">
-          {calculatedToolpaths.map((toolpath, index) => (
-            <article
-              key={toolpath.id}
-              className={`toolpath-card${editingToolpathId === toolpath.id ? " is-editing" : ""}`}
-            >
-              <div className="toolpath-order">{index + 1}</div>
-              <div className="toolpath-card-body">
-                <strong>{toolpath.name}</strong>
-                <span>{toolpath.pathIds.length} パス · {toolpath.passCount} 回 · Z-{toolpath.settings.finalDepth} mm</span>
-                <span>ビット Ø{toolpath.settings.bitDiameter} · {formatDuration(toolpath.estimatedMinutes)}</span>
-              </div>
-              <div className="toolpath-card-actions">
-                <IconButton label={`${toolpath.name}を編集`} active={editingToolpathId === toolpath.id} onClick={() => editToolpath(toolpath)}>
-                  <Pencil size={15} />
-                </IconButton>
-                <IconButton label={`${toolpath.name}を削除`} onClick={() => deleteToolpath(toolpath.id)}>
-                  <Trash2 size={15} />
-                </IconButton>
-              </div>
-            </article>
-          ))}
-          {!calculatedToolpaths.length && (
-            <div className="toolpath-empty"><Layers3 size={22} /><span>計算済みツールパスなし</span></div>
-          )}
-        </div>
-
-        <div className="toolpath-export-area">
-          <div className="toolpath-total">
-            <span>合計時間</span>
-            <strong>{formatDuration(calculatedToolpaths.reduce((total, item) => total + item.estimatedMinutes, 0))}</strong>
-          </div>
-          <button type="button" className="toolpath-export-button" disabled={!calculatedToolpaths.length} onClick={downloadGcode}>
-            <Download size={17} />
-            <span>{exportMode === "combined" ? "1ファイルで書き出す" : "個別に書き出す"}</span>
-          </button>
-        </div>
+      <aside className="right-panel">
+        <PropertiesPanel document={history.document} selectedPathIds={selectedPathIds} selectedNodes={selectedNodes} onCommit={commitEditorDocument} />
+        <PathListPanel document={history.document} selectedPathIds={selectedPathIds} onSelectionChange={(ids) => { setSelectedPathIds(ids); setSelectedNodes([]); }} onCommit={commitEditorDocument} />
+        <CamPanel
+          document={history.document}
+          material={project.material}
+          settings={project.camDraft}
+          bits={project.tools.library}
+          activeBitId={project.tools.activeToolId}
+          operationName={operationName}
+          operations={project.camOperations}
+          activeOperationId={activeOperationId}
+          issues={operationIssues}
+          selectionCount={selectedPathIds.length}
+          onMaterialChange={(material: ProjectMaterial) => setProject((current) => ({ ...current, material }))}
+          onSettingsChange={(camDraft) => setProject((current) => ({ ...current, camDraft }))}
+          onBitChange={selectBit}
+          onOperationNameChange={setOperationName}
+          onCalculate={calculate}
+          onSelectOperation={(id) => {
+            setActiveOperationId(id);
+            const operation = project.camOperations.find((item) => item.id === id);
+            if (operation) setProject((current) => ({ ...current, camDraft: { ...operation.settings } }));
+          }}
+          onDeleteOperation={(id) => {
+            setProject((current) => ({ ...current, camOperations: current.camOperations.filter((operation) => operation.id !== id) }));
+            if (activeOperationId === id) setActiveOperationId(null);
+          }}
+          onExport={exportGcode}
+        />
       </aside>
+
+      <footer className="status-bar">
+        <span>X {cursor.x.toFixed(2)} mm</span><span>Y {cursor.y.toFixed(2)} mm</span>
+        <span>Snap <button type="button" className={snapEnabled ? "is-active" : ""} onClick={() => setSnapEnabled((current) => !current)}>{snapEnabled ? "ON" : "OFF"}</button></span>
+        <span>Grid <button type="button" className={gridVisible ? "is-active" : ""} onClick={() => setGridVisible((current) => !current)}>{gridVisible ? "ON" : "OFF"}</button>
+          <select value={gridSizeMm} onChange={(event) => setGridSizeMm(Number(event.target.value) as 1 | 5 | 10)}><option value={1}>1mm</option><option value={5}>5mm</option><option value={10}>10mm</option></select></span>
+        <span className="status-spacer" /><span>単位 mm / Y-up</span><span>Revision {history.document.revision}</span><span>{selectedPathIds.length} パス選択</span>
+      </footer>
     </main>
   );
 }

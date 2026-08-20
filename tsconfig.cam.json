@@ -7,7 +7,12 @@
     "next-env.d.ts",
     "app/**/*.ts",
     "app/**/*.tsx",
-    "lib/**/*.ts"
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "hooks/**/*.ts",
+    "hooks/**/*.tsx",
+    "lib/**/*.ts",
+    "tests/**/*.ts"
   ],
   "exclude": [
     "node_modules",

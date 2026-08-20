@@ -1,43 +1,48 @@
-# CAMEE
+# CutPath
 
-DXFの2D図形から、GORDIX6ポスト形式の彫り込みG-codeを作成するブラウザCAMです。
+CutPathは、CNC加工用の2D図形やBezierパスをブラウザで作成・編集し、そのままセンターラインCAM、3D確認、GORDIX6向けG-code出力まで進められるベクター/CAM統合ツールです。`Isshin-dev/CAMEE` を基にしたPhase 1A実装です。
 
-## 対応内容
+## Phase 1Aでできること
 
-- DXF: LINE, LWPOLYLINE, POLYLINE, ARC, CIRCLE, ELLIPSE, SPLINE
-- ツールパス: DXF線上のセンターライン加工
-- 2D編集: 単体・ウィンドウ選択、複数パスの移動・拡大縮小・15度回転、矢印キーで微調整
-- コーナー加工: ビット半径によるドッグボーン、H型（T-bone）フィレット
-- パス修復: 許容値を指定した端点接続と閉合
-- 材料設定: W・H・D、9点またはDXFのXY原点、2D座標・寸法ガイド
-- 名前付きツールパス: 選択パスごとの加工条件、一覧での編集・削除、一括／個別G-code出力
-- プロジェクト保存: IndexedDBへの自動・手動保存とリロード時の復元
-- ビットライブラリ: ストレート、V、ボールノーズ、クラウン、ドリル、カスタムの詳細登録・保存
-- 多段加工: 最終深さと1回の深さから自動分割
-- 進入: 閉じたパスへの直線ランプ
-- 表示: Three.jsによる2D/3Dプレビュー
-- 出力: GORDIX6 Studio V4スタイルの `.gcode`
+- mm / X-right / Y-upの`VectorDocument`を編集データの正として保存
+- Selection、Direct Selection、Pen、Line、Rectangle、Ellipse
+- open/closed path、Cubic Bézier anchor/handle、corner/smooth/symmetric
+- 複数選択、範囲選択、移動、削除、copy/paste、undo/redo、数値編集
+- Grid/Anchor/Endpoint/Material/Origin/Horizontal/Vertical snap
+- cursor中心zoom、Space/middle pan、Fit All
+- DXF → VectorDocument（ARC/CIRCLE/ELLIPSEをcubic化）
+- SVG import（path/line/polyline/polygon/rect/circle/ellipse、M/L/H/V/C/Z）
+- VectorDocumentからのSVG export、CutPath JSON import/export
+- Project Version 2、Version 1 migration、IndexedDB auto save/reload restore
+- VectorPath → adaptive CAM Adapter → ToolPath → Centerline CAM
+- Three.js 3D Preview、多段加工、closed path ramp
+- stale operation検出、安全警告、安全Zを先行するG-code
 
-## GORDIX出力の前提
+## 開発
 
-- mm (`G21`)
-- 絶対座標 (`G90`)
-- Z0 = 材料上面
-- 退避高さ = 2 mm
-- 主軸は手動操作
-- 1ファイルに1本のビット
-
-## ローカル起動
+Node.js 22.13以上を使用します。
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
 ## 検証
 
 ```bash
-npm test
+npm run lint
+npm run typecheck
+npm run test
+npm run build
+npm run check
 ```
 
-実機での本加工前に、ビットを材料から離した状態で動作確認してください。
+`npm run test` はVitest unit/golden testsです。`npm run check` はlint → typecheck → unit test → production buildを順に実行します。
+
+## CNC Safety
+
+G-code出力前に、非有限値、空／ゼロ長path、加工条件、open path ramp、材料外、材料厚超過、貫通許可、stale revisionを検査します。最初のXY Rapidより前に退避Zへ移動します。
+
+実機の本加工前に、必ずビットを材料から離した状態でDry Runしてください。
+
+設計、scope、upstream、実検証結果は [`docs/`](./docs/) を参照してください。参照upstreamにLICENSEファイルはないため、ライセンスを推測して追加していません。

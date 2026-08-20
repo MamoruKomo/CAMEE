@@ -636,7 +636,7 @@ function format(value: number) {
   return cleanNumber(value).toFixed(3);
 }
 
-export function generateGcode(paths: ToolPath[], settings: CamSettings, fileName: string) {
+export function generateLegacyGcode(paths: ToolPath[], settings: CamSettings, fileName: string) {
   const depths = buildPassDepths(settings.finalDepth, settings.stepDown);
   if (!paths.length || !depths.length) throw new Error("パスと加工深さを確認してください。");
   if (settings.bitDiameter <= 0 || settings.feedRate <= 0 || settings.plungeRate <= 0) {
@@ -688,6 +688,81 @@ export function generateGcode(paths: ToolPath[], settings: CamSettings, fileName
   });
 
   if (cuttingStarted) lines.push(`G0 Z${format(settings.retractHeight)}`);
+  lines.push("M5", "");
+  return lines.join("\n");
+}
+
+function validateGcodeInputs(paths: ToolPath[], settings: CamSettings) {
+  const numericSettings: Array<[number, string]> = [
+    [settings.finalDepth, "最終深さ"],
+    [settings.stepDown, "1回の深さ"],
+    [settings.bitDiameter, "ビット径"],
+    [settings.feedRate, "送り速度"],
+    [settings.plungeRate, "切り込み速度"],
+    [settings.retractHeight, "退避高さ"],
+    [settings.rapidFeed, "早送り速度"],
+  ];
+  numericSettings.forEach(([value, label]) => {
+    if (!Number.isFinite(value) || value <= 0) throw new Error(`${label}は有限な正値にしてください。`);
+  });
+  if (!paths.length) throw new Error("加工パスが空です。");
+  paths.forEach((path) => {
+    if (path.points.length < 2) throw new Error(`${path.id}: 2点未満のパスは出力できません。`);
+    let length = 0;
+    path.points.forEach((value, index) => {
+      if (!Number.isFinite(value.x) || !Number.isFinite(value.y)) throw new Error(`${path.id}: NaNまたはInfinityがあります。`);
+      if (index) length += distance(path.points[index - 1], value);
+    });
+    if (!Number.isFinite(length) || length <= 1e-7) throw new Error(`${path.id}: ゼロ長パスは出力できません。`);
+    if (settings.rampEnabled && !path.closed) throw new Error("ランプ進入は閉じたパスだけで使用できます。");
+  });
+  if (settings.rampEnabled && (!Number.isFinite(settings.rampLength) || settings.rampLength <= 0)) {
+    throw new Error("ランプ長さは有限な正値にしてください。");
+  }
+}
+
+export function generateGcode(paths: ToolPath[], settings: CamSettings, fileName: string) {
+  validateGcodeInputs(paths, settings);
+  const depths = buildPassDepths(settings.finalDepth, settings.stepDown);
+  if (!depths.length) throw new Error("加工深さを確認してください。");
+  const lines = [
+    "; CNC V4.0",
+    `; Source: ${fileName.replace(/[^\x20-\x7E]/g, "_")}`,
+    `; Tool: ${(settings.toolType ?? "straight").replace(/[^\x20-\x7E]/g, "_")} D${format(settings.bitDiameter)} mm`,
+    ...(settings.toolName ? [`; Tool name: ${settings.toolName.replace(/[^\x20-\x7E]/g, "_")}`] : []),
+    ...(settings.spindleRpm ? [`; Spindle: ${Math.round(settings.spindleRpm)} RPM`] : []),
+    "; Z0 = material top. Start the router manually before cycle start.",
+    "G21",
+    "G90",
+    `G0 Z${format(settings.retractHeight)}`,
+    `G0 X0.000 Y0.000 F${Math.round(settings.rapidFeed)}`,
+  ];
+
+  depths.forEach((depth, passIndex) => {
+    lines.push(`; Pass ${passIndex + 1}/${depths.length} Z-${format(depth)}`);
+    paths.forEach((path) => {
+      const start = path.points[0];
+      lines.push(`G0 Z${format(settings.retractHeight)}`);
+      lines.push(`G0 X${format(start.x)} Y${format(start.y)}`);
+      const previousDepth = passIndex === 0 ? 0 : depths[passIndex - 1];
+      const ramp = settings.rampEnabled ? buildRampToolpath(path, previousDepth, depth, settings.rampLength) : [];
+      if (ramp.length) {
+        lines.push(`; Ramp L${format(Math.min(settings.rampLength, pathLength(path)))}`);
+        lines.push(`G1 Z${format(-previousDepth)} F${format(settings.plungeRate)}`);
+        ramp.slice(1).forEach((value, pointIndex) => {
+          const feed = pointIndex === 0 ? ` F${format(settings.feedRate)}` : "";
+          lines.push(`G1 X${format(value.x)} Y${format(value.y)} Z${format(-value.depth)}${feed}`);
+        });
+      } else {
+        lines.push(`G1 Z-${format(depth)} F${format(settings.plungeRate)}`);
+        path.points.slice(1).forEach((value, pointIndex) => {
+          const feed = pointIndex === 0 ? ` F${format(settings.feedRate)}` : "";
+          lines.push(`G1 X${format(value.x)} Y${format(value.y)}${feed}`);
+        });
+      }
+    });
+  });
+  lines.push(`G0 Z${format(settings.retractHeight)}`);
   lines.push("M5", "");
   return lines.join("\n");
 }
